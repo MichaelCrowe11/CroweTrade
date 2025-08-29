@@ -1,0 +1,273 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: cl-live
+  labels:
+    app: grafana
+    component: monitoring
+data:
+  trading-overview.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "CroweTrade - Trading Overview",
+        "tags": ["crowetrade", "trading"],
+        "timezone": "UTC",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Portfolio Performance",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "crowetrade_portfolio_pnl_total",
+                "legendFormat": "Total PnL"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "currencyUSD",
+                "color": {
+                  "mode": "value",
+                  "fixedColor": "green"
+                }
+              }
+            }
+          },
+          {
+            "id": 2,
+            "title": "Portfolio Drawdown",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "crowetrade_portfolio_drawdown",
+                "legendFormat": "Current Drawdown"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "color": {
+                  "mode": "thresholds",
+                  "thresholds": [
+                    {"color": "green", "value": 0},
+                    {"color": "yellow", "value": 0.01},
+                    {"color": "red", "value": 0.02}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "id": 3,
+            "title": "Signal Generation Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(crowetrade_signals_generated_total[5m])",
+                "legendFormat": "Signals/sec"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "title": "Execution Latency",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.50, crowetrade_execution_latency_seconds)",
+                "legendFormat": "p50"
+              },
+              {
+                "expr": "histogram_quantile(0.95, crowetrade_execution_latency_seconds)",
+                "legendFormat": "p95"
+              },
+              {
+                "expr": "histogram_quantile(0.99, crowetrade_execution_latency_seconds)",
+                "legendFormat": "p99"
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "title": "Risk Metrics",
+            "type": "table",
+            "targets": [
+              {
+                "expr": "crowetrade_risk_var_estimate",
+                "legendFormat": "VaR"
+              },
+              {
+                "expr": "crowetrade_risk_exposure_gross",
+                "legendFormat": "Gross Exposure"
+              },
+              {
+                "expr": "crowetrade_risk_exposure_net",
+                "legendFormat": "Net Exposure"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "title": "Trade Volume",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "sum(rate(crowetrade_trades_volume_total[1m])) by (venue)",
+                "legendFormat": "{{ venue }}"
+              }
+            ]
+          }
+        ],
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "refresh": "30s"
+      }
+    }
+
+  system-health.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "CroweTrade - System Health",
+        "tags": ["crowetrade", "infrastructure"],
+        "timezone": "UTC",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Service Availability",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "avg(up{job=~\"crowetrade.*\"})",
+                "legendFormat": "Availability"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "thresholds": [
+                  {"color": "red", "value": 0},
+                  {"color": "yellow", "value": 0.95},
+                  {"color": "green", "value": 0.99}
+                ]
+              }
+            }
+          },
+          {
+            "id": 2,
+            "title": "Response Time",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+                "legendFormat": "{{ service }}"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Error Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(http_requests_total{status=~\"5..\"}[5m]) / rate(http_requests_total[5m])",
+                "legendFormat": "{{ service }}"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "title": "CPU Usage",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(container_cpu_usage_seconds_total{pod=~\".*agent.*\"}[5m])",
+                "legendFormat": "{{ pod }}"
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "title": "Memory Usage",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "container_memory_usage_bytes{pod=~\".*agent.*\"} / container_spec_memory_limit_bytes",
+                "legendFormat": "{{ pod }}"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "title": "Kafka Consumer Lag",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "kafka_consumer_lag_sum",
+                "legendFormat": "{{ consumergroup }}"
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+  market-data.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "CroweTrade - Market Data",
+        "tags": ["crowetrade", "market-data"],
+        "timezone": "UTC",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Data Feed Status",
+            "type": "table",
+            "targets": [
+              {
+                "expr": "crowetrade_market_data_feeds_status",
+                "legendFormat": "{{ feed }}"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "title": "Message Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(crowetrade_market_data_messages_total[1m])",
+                "legendFormat": "{{ exchange }}"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Latency Distribution",
+            "type": "heatmap",
+            "targets": [
+              {
+                "expr": "rate(crowetrade_market_data_latency_seconds_bucket[5m])",
+                "legendFormat": "{{ le }}"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "title": "Data Quality Score",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "crowetrade_market_data_quality_score",
+                "legendFormat": "Quality Score"
+              }
+            ]
+          }
+        ]
+      }
+    }

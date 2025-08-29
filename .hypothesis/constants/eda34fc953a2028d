@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/services/__init__.py
+# hypothesis_version: 6.138.7
+
+['data_service', 'decision_service', 'execution_service', 'research_service']

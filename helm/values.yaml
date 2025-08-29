@@ -1,0 +1,248 @@
+# Global configuration
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+
+# Environment configuration
+environment: production
+cluster:
+  name: "crowetrade-prod"
+  region: "us-east-1"
+
+# Namespace configuration
+namespaces:
+  live: "cl-live"
+  research: "cl-research"
+
+# Service mesh configuration
+serviceMesh:
+  enabled: true
+  provider: "istio"  # or "linkerd"
+
+# Common image configuration
+image:
+  registry: "docker.io"
+  repository: "crowetrade"
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+# Portfolio Agent Configuration
+portfolioAgent:
+  enabled: true
+  replicaCount: 3
+  image:
+    tag: "latest"
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  config:
+    riskLimits:
+      maxGrossExposure: 10000000
+      maxNetExposure: 5000000
+      maxDrawdown: 0.02
+    optimization:
+      method: "robust_mvo"
+      lambda: 2.0
+      turnoverPenalty: 0.001
+
+# Execution Agent Configuration
+executionAgent:
+  enabled: true
+  replicaCount: 3
+  image:
+    tag: "latest"
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+  config:
+    venues:
+      nyse:
+        enabled: true
+        protocol: "FIX"
+        endpoint: "fix.nyse.com:9999"
+      nasdaq:
+        enabled: true
+        protocol: "FIX"
+        endpoint: "fix.nasdaq.com:9999"
+    algorithms:
+      vwap:
+        enabled: true
+        maxParticipation: 0.1
+      twap:
+        enabled: true
+        minSliceTime: 60
+
+# Data Agents Configuration
+dataAgents:
+  enabled: true
+  replicaCount: 2
+  image:
+    tag: "latest"
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+# Signal Agents Configuration
+signalAgents:
+  enabled: true
+  replicaCount: 5
+  image:
+    tag: "latest"
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+
+# Risk Agents Configuration
+riskAgents:
+  enabled: true
+  replicaCount: 2
+  image:
+    tag: "latest"
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+# Message Bus Configuration (Kafka)
+kafka:
+  enabled: true
+  replicaCount: 3
+  persistence:
+    enabled: true
+    size: 100Gi
+    storageClass: "fast-ssd"
+  zookeeper:
+    replicaCount: 3
+    persistence:
+      enabled: true
+      size: 10Gi
+  topics:
+    - name: "market-data"
+      partitions: 12
+      replicationFactor: 3
+    - name: "signals"
+      partitions: 6
+      replicationFactor: 3
+    - name: "portfolio-targets"
+      partitions: 3
+      replicationFactor: 3
+    - name: "executions"
+      partitions: 6
+      replicationFactor: 3
+
+# Cache Configuration (Redis)
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: true
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClass: "fast-ssd"
+
+# Database Configuration (PostgreSQL)
+postgresql:
+  enabled: true
+  architecture: standalone
+  auth:
+    postgresPassword: ""  # Set in secrets
+    database: "crowetrade"
+  primary:
+    persistence:
+      enabled: true
+      size: 200Gi
+      storageClass: "fast-ssd"
+
+# Monitoring Configuration
+monitoring:
+  prometheus:
+    enabled: true
+    retention: "30d"
+    storageSize: "100Gi"
+  grafana:
+    enabled: true
+    adminPassword: ""  # Set in secrets
+  alertmanager:
+    enabled: true
+  jaeger:
+    enabled: true
+
+# Security Configuration
+security:
+  networkPolicies:
+    enabled: true
+  podSecurityStandards:
+    enabled: true
+    enforce: "restricted"
+  rbac:
+    create: true
+
+# Ingress Configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: api.crowetrade.com
+      paths:
+        - path: /
+          pathType: Prefix
+          service: portfolio-agent
+    - host: execution.crowetrade.com
+      paths:
+        - path: /
+          pathType: Prefix
+          service: execution-agent
+  tls:
+    - secretName: crowetrade-tls
+      hosts:
+        - api.crowetrade.com
+        - execution.crowetrade.com
+
+# Backup Configuration
+backup:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention: "30d"
+  destinations:
+    - type: "s3"
+      bucket: "crowetrade-backups"
+      region: "us-east-1"
+
+# Disaster Recovery
+disasterRecovery:
+  enabled: true
+  crossRegion:
+    enabled: true
+    regions:
+      - "us-west-2"
+      - "eu-west-1"

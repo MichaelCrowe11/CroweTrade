@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://crowelogic.io/schemas/target_position.schema.json",
+  "title": "TargetPosition",
+  "type": "object",
+  "required": ["portfolio", "instrument", "qty_target", "max_child_participation", "risk_budget", "policy_id"],
+  "properties": {
+    "portfolio": {"type": "string"},
+    "instrument": {"type": "string"},
+    "qty_target": {"type": "number"},
+    "max_child_participation": {"type": "number", "minimum": 0, "maximum": 1},
+    "risk_budget": {"type": "number", "minimum": 0},
+    "policy_id": {"type": "string"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/services/execution_service/order_router.py
+# hypothesis_version: 6.138.7
+
+[0.0, 'DAY', 'NONE', 'Order not found', 'average_price', 'cancelled', 'client_order_id', 'exchange_order_id', 'filled', 'filled_quantity', 'idempotency_key', 'limit', 'market', 'metadata', 'order_type', 'partially_filled', 'pending', 'price', 'quantity', 'rejected', 'rejection_reason', 'side', 'status', 'stop', 'stop_limit', 'stop_price', 'submitted', 'success', 'symbol', 'time_in_force', 'timestamp', 'unknown', 'venue']
