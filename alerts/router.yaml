@@ -1,0 +1,21 @@
+- alert: RouterP99Latency
+	expr: histogram_quantile(0.99, sum(rate(router_latency_seconds_bucket[5m])) by (le)) > 0.03
+	for: 5m
+	labels: {severity: critical}
+	annotations: {summary: "Router p99 > 30ms"}
+
+- alert: MarketDataLagP99
+	expr: histogram_quantile(0.99, sum(rate(mkt_ingest_lag_ms_bucket[5m])) by (le)) > 250
+	for: 3m
+	labels: {severity: warning}
+
+- alert: ErrorBudgetBurnFast
+	expr: (1 - rate(router_success_total[5m]) / rate(router_requests_total[5m])) > 0.005
+	for: 10m
+	labels: {severity: critical}
+
+- alert: ErrorBudgetBurnSlow
+	expr: (1 - rate(router_success_total[1h]) / rate(router_requests_total[1h])) > 0.001
+	for: 2h
+	labels: {severity: warning}
+

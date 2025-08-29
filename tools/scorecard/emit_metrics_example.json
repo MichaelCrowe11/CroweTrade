@@ -1,0 +1,20 @@
+{
+	"eos_contracts_pass": true,
+	"venue_correctness_pass": true,
+	"risk_governors_pass": true,
+	"observability_pass": true,
+	"supply_chain_pass": true,
+	"audit_worm_pass": true,
+	"dr_bcp_pass": true,
+	"feature_store_pit": 0.9,
+	"execution_tca": 0.8,
+	"governance": 0.85,
+	"eos_contracts": 1.0,
+	"venue_correctness": 0.95,
+	"risk_governors": 0.95,
+	"observability": 0.95,
+	"supply_chain": 1.0,
+	"audit_worm": 1.0,
+	"dr_bcp": 0.9
+}
+
