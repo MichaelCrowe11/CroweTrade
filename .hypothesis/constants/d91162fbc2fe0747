@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/__init__.py
+# hypothesis_version: 6.138.7
+
+['0.1.0', 'agents', 'contracts', 'execution', 'feature_store', 'governance', 'optimization', 'orchestration', 'registry', 'risk', 'utils']

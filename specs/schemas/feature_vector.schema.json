@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://crowelogic.io/schemas/feature_vector.schema.json",
+  "title": "FeatureVector",
+  "type": "object",
+  "required": ["instrument", "asof", "horizon", "values", "quality"],
+  "properties": {
+    "instrument": {"type": "string"},
+    "asof": {"type": "string", "format": "date-time"},
+    "horizon": {"type": "string"},
+    "values": {
+      "type": "object",
+      "additionalProperties": {"type": "number"}
+    },
+    "quality": {
+      "type": "object",
+      "properties": {
+        "lag_ms": {"type": "number"},
+        "coverage": {"type": "number", "minimum": 0, "maximum": 1}
+      },
+      "additionalProperties": false,
+      "required": ["lag_ms", "coverage"]
+    }
+  },
+  "additionalProperties": false
+}

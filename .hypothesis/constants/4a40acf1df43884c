@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/services/data_service/validation.py
+# hypothesis_version: 6.138.7
+
+['-inf', 'errors', 'inf', 'is_valid', 'max', 'min', 'range', 'required', 'type', 'warnings']

@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/services/decision_service/optimizer.py
+# hypothesis_version: 6.138.7
+
+[0.0, 0.01, 0.1, 0.3, 1.0, 100, 'constraints', 'expected_return', 'expected_risk', 'inf', 'max_sharpe', 'max_weight', 'mean_variance', 'metadata', 'method', 'min_variance', 'min_weight', 'optimization_method', 'rebalance_threshold', 'risk_aversion', 'risk_budgeting', 'sharpe_ratio', 'timestamp', 'weights']

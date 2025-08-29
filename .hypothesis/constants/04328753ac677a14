@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/services/data_service/feature_store.py
+# hypothesis_version: 6.138.7
+
+[300, 'compute_fn', 'entity_id', 'features', 'metadata', 'name', 'timestamp', 'ttl_seconds', 'v1.0', 'value', 'version']

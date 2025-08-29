@@ -1,0 +1,7 @@
+{
+  "instrument": "AAPL",
+  "asof": "2025-08-29T14:00:00Z",
+  "horizon": "1d",
+  "values": {"mom_5": 0.012, "rv_20": 0.18},
+  "quality": {"lag_ms": 120, "coverage": 0.99}
+}

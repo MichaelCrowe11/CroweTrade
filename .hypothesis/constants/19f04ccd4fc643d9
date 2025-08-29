@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/services/research_service/backtest.py
+# hypothesis_version: 6.138.7
+
+[0.0, 'end_date', 'initial_capital', 'max_drawdown', 'metrics', 'price', 'quantity', 'sharpe_ratio', 'side', 'start_date', 'strategy_params', 'symbol', 'symbols', 'timestamp', 'total_return', 'trades']

@@ -1,0 +1,8 @@
+{
+  "portfolio": "default",
+  "instrument": "AAPL",
+  "qty_target": 1500,
+  "max_child_participation": 0.1,
+  "risk_budget": 1.0,
+  "policy_id": "cs_mom_v1"
+}

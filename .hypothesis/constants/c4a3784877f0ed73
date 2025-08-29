@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/.venv/bin/pytest
+# hypothesis_version: 6.138.7
+
+['.exe', '__main__']

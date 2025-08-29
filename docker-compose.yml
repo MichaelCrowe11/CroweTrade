@@ -1,0 +1,39 @@
+version: "3.9"
+services:
+  execution:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.execution
+    image: crowetrade-execution:local
+    container_name: crowe-exec
+    environment:
+      - RUN_MODE=production
+      - PAPER_MODE=true
+      - LOG_LEVEL=info
+      - PYTHONPATH=/app/src
+    ports:
+      - "18080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request,sys\ntry:\n  with urllib.request.urlopen('http://localhost:8080/health', timeout=2) as r:\n    sys.exit(0 if r.status==200 else 1)\nexcept Exception:\n  sys.exit(1)\nPY"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  portfolio:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.portfolio
+    image: crowetrade-portfolio:local
+    container_name: crowe-port
+    environment:
+      - RUN_MODE=production
+      - PAPER_MODE=true
+      - LOG_LEVEL=info
+      - PYTHONPATH=/app/src
+    ports:
+      - "18081:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request,sys\ntry:\n  with urllib.request.urlopen('http://localhost:8080/health', timeout=2) as r:\n    sys.exit(0 if r.status==200 else 1)\nexcept Exception:\n  sys.exit(1)\nPY"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
