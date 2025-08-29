@@ -1,0 +1,11 @@
+syntax = "proto3";
+package cl.proto;
+
+message FeatureVector {
+  string instrument = 1;          // e.g., "AAPL"
+  int64 asof_unix_ns = 2;         // UTC nanoseconds
+  string horizon = 3;             // "1m","5m","1d"
+  repeated double values = 4;     // order per feature_catalog
+  double quality = 5;             // [0,1]
+  string policy_id = 6;           // feature policy/version
+}

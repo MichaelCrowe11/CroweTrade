@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/services/data_service/ingestion.py
+# hypothesis_version: 6.138.7
+
+['ask', 'bid', 'metadata', 'price', 'source', 'symbol', 'timestamp', 'volume']

@@ -1,0 +1,22 @@
+id: cs_mom_v1
+owner: CR-008
+trade_universe: US_equities_top1000
+horizons: [1d, 5d]
+entry_gate:
+  prob_edge_min: 0.58
+  sigma_max: 0.03
+risk:
+  gross_limit: 1.5
+  net_limit: 0.5
+  dd_intraday: 0.02
+  var_limit: 0.015
+sizing:
+  method: kelly_tempered
+  lambda: 0.3
+execution:
+  algo: POV
+  participation_cap: 0.1
+  limit_offset_bps: 3
+stand_down:
+  on_data_gap: true
+  on_vol_spike_sigma: 4

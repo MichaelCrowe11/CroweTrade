@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-agent
+  namespace: cl-live
+  labels:
+    app: portfolio-agent
+    tier: live
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: portfolio-agent
+  template:
+    metadata:
+      labels:
+        app: portfolio-agent
+        tier: live
+    spec:
+      serviceAccountName: portfolio-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: portfolio-agent
+        image: registry/portfolio-agent:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: TOPIC_IN
+          value: "signal.v1"
+        - name: TOPIC_OUT
+          value: "target.v1"
+        - name: MVO_LAMBDA
+          value: "8.0"
+        - name: MVO_TAU
+          value: "2.5"
+        - name: BOX
+          value: "0.25"
+        - name: GROSS_MAX
+          value: "1.5"
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 2
+            memory: 2Gi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: portfolio-agent-svc
+  namespace: cl-live
+  labels:
+    app: portfolio-agent
+spec:
+  selector:
+    app: portfolio-agent
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  - port: 9090
+    targetPort: 9090
+    name: metrics

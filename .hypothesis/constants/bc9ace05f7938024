@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/services/research_service/simulation.py
+# hypothesis_version: 6.138.7
+
+[0.0, '95%', '99%', 'confidence_intervals', 'market_conditions', 'max', 'mean', 'min', 'num_paths', 'paths', 'scenario_name', 'seed', 'statistics', 'std', 'time_horizon', 'timestamps', 'values']

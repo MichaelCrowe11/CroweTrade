@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/services/decision_service/signal_gate.py
+# hypothesis_version: 6.138.7
+
+['Filter failed', 'adjusted_signal', 'approved', 'direction', 'metadata', 'passed', 'pending', 'reason', 'reasons', 'rejected', 'signal_id', 'status', 'strength', 'symbol', 'timestamp']

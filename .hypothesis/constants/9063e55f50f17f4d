@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/core/types.py
+# hypothesis_version: 6.138.7
+
+['AgentId', 'BUY', 'CANCELLED', 'DAY', 'ERROR', 'FILLED', 'FOK', 'GTC', 'INIT', 'IOC', 'LIMIT', 'MARKET', 'OrderId', 'PARTIAL', 'PAUSED', 'PENDING', 'PolicyId', 'REJECTED', 'RUNNING', 'RequestId', 'SELL', 'STOP', 'STOPPED', 'STOP_LIMIT', 'SUBMITTED']

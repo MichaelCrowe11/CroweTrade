@@ -1,0 +1,41 @@
+# Multi-stage build for execution agent
+FROM python:3.11-slim as builder
+
+WORKDIR /app
+
+# Install system dependencies for building
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Production stage
+FROM python:3.11-slim
+
+# Create non-root user
+RUN groupadd -r crowe && useradd -r -g crowe crowe
+
+WORKDIR /app
+
+# Copy Python dependencies
+COPY --from=builder /root/.local /home/crowe/.local
+
+# Copy application
+COPY src/ ./src/
+COPY proto/ ./proto/
+
+# Environment
+ENV PATH=/home/crowe/.local/bin:$PATH
+ENV PYTHONPATH=/app/src
+
+# Health check (no external deps)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import sys,urllib.request;sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health',timeout=5).getcode()==200 else 1)" || exit 1
+
+USER crowe
+
+CMD ["python", "-m", "crowetrade.services.execution_agent"]
