@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/services/decision_service/position_sizer.py
+# hypothesis_version: 6.138.7
+
+[0.0, 0.01, 0.02, 0.25, 0.5, 1.0, 'fixed', 'kelly', 'max_position_size', 'metadata', 'method', 'nav', 'notional_value', 'params', 'portfolio_nav', 'price', 'quantity', 'risk_amount', 'risk_parity', 'risk_per_trade', 'signal_strength', 'sizing_method', 'strength', 'symbol', 'target_volatility', 'timestamp', 'total_exposure', 'volatility', 'volatility_scaled', 'win_loss_ratio', 'win_probability']

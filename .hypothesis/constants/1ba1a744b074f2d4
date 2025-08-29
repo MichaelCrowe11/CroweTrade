@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/live/signal_agent.py
+# hypothesis_version: 6.138.7
+
+[0.5, 'prob_edge_min', 'sigma_max']

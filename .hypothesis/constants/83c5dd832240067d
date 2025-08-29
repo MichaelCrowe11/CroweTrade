@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/services/research_service/training.py
+# hypothesis_version: 6.138.7
+
+[0.0, 'accuracy', 'batch_size', 'config', 'epochs', 'f1_score', 'hyperparameters', 'metadata', 'metrics', 'model_checksum', 'model_id', 'model_type', 'precision', 'recall', 'train_split', 'trained_at', 'training_time', 'validation_split']

@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/services/execution_service/venue_adapter.py
+# hypothesis_version: 6.138.7
+
+[100.0, 1000, 5000, 'CANCELLED', 'FILLED', 'NEW', 'RUN_MODE', 'development', 'production']
