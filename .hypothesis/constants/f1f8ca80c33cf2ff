@@ -1,0 +1,4 @@
+# file: /usr/local/py-utils/bin/pytest
+# hypothesis_version: 6.138.7
+
+['__main__']
