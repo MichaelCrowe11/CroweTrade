@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CroweTrade - Parallel Financial Agent Ecosystem</title>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            margin: 0; 
+            padding: 0; 
+            background: #f8f9fa; 
+        }
+        .container { 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            padding: 20px; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; 
+            padding: 40px 0; 
+            text-align: center; 
+        }
+        .nav { 
+            background: white; 
+            padding: 20px 0; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+        }
+        .nav ul { 
+            list-style: none; 
+            margin: 0; 
+            padding: 0; 
+            display: flex; 
+            justify-content: center; 
+        }
+        .nav li { 
+            margin: 0 20px; 
+        }
+        .nav a { 
+            text-decoration: none; 
+            color: #333; 
+            font-weight: 500; 
+        }
+        .nav a:hover { 
+            color: #667eea; 
+        }
+        .card { 
+            background: white; 
+            padding: 30px; 
+            margin: 20px 0; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+        }
+        .badge { 
+            background: #28a745; 
+            color: white; 
+            padding: 4px 8px; 
+            border-radius: 4px; 
+            font-size: 12px; 
+        }
+        .grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); 
+            gap: 20px; 
+        }
+        .feature { 
+            text-align: center; 
+            padding: 20px; 
+        }
+        .feature h3 { 
+            color: #667eea; 
+        }
+        pre { 
+            background: #f1f3f4; 
+            padding: 15px; 
+            border-radius: 5px; 
+            overflow-x: auto; 
+        }
+        .status { 
+            display: flex; 
+            align-items: center; 
+            gap: 10px; 
+            margin: 10px 0; 
+            justify-content: center;
+        }
+        .status-dot { 
+            width: 10px; 
+            height: 10px; 
+            border-radius: 50%; 
+            background: #28a745; 
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1>🏦 CroweTrade</h1>
+            <p>Parallel Financial Agent Ecosystem</p>
+            <div class="status">
+                <span class="status-dot"></span>
+                <span>Production Ready</span>
+                <span class="badge">PAPER MODE</span>
+            </div>
+        </div>
+    </div>
+    
+    <div class="nav">
+        <div class="container">
+            <ul>
+                <li><a href="#overview">Overview</a></li>
+                <li><a href="coverage/">Test Coverage</a></li>
+                <li><a href="#deployment">Deployment</a></li>
+                <li><a href="#architecture">Architecture</a></li>
+            </ul>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="card" id="overview">
+            <h2>🎯 Project Overview</h2>
+            <p>CroweTrade is a production-grade, parallel financial agent ecosystem designed for quantitative trading with risk-aware alpha generation, portfolio construction, and execution across multiple venues.</p>
+            
+            <div class="grid">
+                <div class="feature">
+                    <h3>🤖 Intelligent Agents</h3>
+                    <p>24 specialized Quant Pods for signal generation, risk management, and execution</p>
+                </div>
+                <div class="feature">
+                    <h3>⚡ Real-time Processing</h3>
+                    <p>Event-driven architecture with &lt;20ms signal latency budget</p>
+                </div>
+                <div class="feature">
+                    <h3>🛡️ Risk Controls</h3>
+                    <p>Multi-layer risk limits, regime detection, and circuit breakers</p>
+                </div>
+                <div class="feature">
+                    <h3>☁️ Cloud Native</h3>
+                    <p>Kubernetes + Fly.io deployment with Docker containers</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card" id="deployment">
+            <h2>🚀 Quick Start</h2>
+            <h3>Fly.io Deployment</h3>
+            <pre><code>export FLYIO_TOKEN=your_token
+./deploy-fly-simple.sh</code></pre>
+            
+            <h3>Local Development</h3>
+            <pre><code>pip install -e .[dev]
+pytest -q
+bash tools/deploy.sh local</code></pre>
+            
+            <h3>Health Endpoints</h3>
+            <ul>
+                <li>Execution: <code>https://crowetrade-execution.fly.dev/health</code></li>
+                <li>Portfolio: <code>https://crowetrade-portfolio.fly.dev/health</code></li>
+                <li>Local: <code>http://localhost:18080/health</code>, <code>http://localhost:18081/health</code></li>
+            </ul>
+        </div>
+        
+        <div class="card" id="architecture">
+            <h2>🏗️ Architecture</h2>
+            <p>The system follows a four-plane architecture:</p>
+            <ol>
+                <li><strong>Data Plane:</strong> Market feeds, alt-data, news ingestion with feature store</li>
+                <li><strong>Research Plane:</strong> 24 Quant Pods + experiment engine + backtester</li>
+                <li><strong>Decision Plane:</strong> Signal gating + regime classification + portfolio optimization</li>
+                <li><strong>Execution Plane:</strong> Smart order routing + TCA + venue adapters</li>
+            </ol>
+            
+            <h3>Safety Features</h3>
+            <ul>
+                <li>🔒 Production mode with <code>PAPER_MODE=true</code> by default</li>
+                <li>🚨 Circuit breakers and kill switches</li>
+                <li>📊 Real-time monitoring and drift detection</li>
+                <li>🔄 Automated rollbacks and canary deployments</li>
+            </ul>
+        </div>
+        
+        <div class="card">
+            <h2>📈 Current Status</h2>
+            <ul>
+                <li>✅ Core contracts and event schemas</li>
+                <li>✅ Signal and portfolio agents</li>
+                <li>✅ Risk management framework</li>
+                <li>✅ Execution routing with venue adapters</li>
+                <li>✅ Docker containerization</li>
+                <li>✅ CI/CD pipeline with security scanning</li>
+                <li>✅ Fly.io production deployment</li>
+                <li>⏳ Live market data integration</li>
+                <li>⏳ Advanced backtesting engine</li>
+                <li>⏳ Model registry and governance</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h2>📊 Live Services</h2>
+            <p>Current deployments (if active):</p>
+            <ul>
+                <li><a href="https://crowetrade-execution.fly.dev/health" target="_blank">Execution Service Health</a></li>
+                <li><a href="https://crowetrade-portfolio.fly.dev/health" target="_blank">Portfolio Service Health</a></li>
+                <li><a href="https://crowetrade-execution.fly.dev/metrics" target="_blank">Execution Metrics</a></li>
+                <li><a href="https://crowetrade-portfolio.fly.dev/metrics" target="_blank">Portfolio Metrics</a></li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,31 @@
+# Fly.io app config for Portfolio service
+app = "crowetrade-portfolio"
+primary_region = "iad"
+
+[build]
+  dockerfile = "docker/Dockerfile.portfolio"
+
+[env]
+  PYTHONUNBUFFERED = "1"
+  PYTHONPATH = "/app/src"
+  RUN_MODE = "production"
+  PAPER_MODE = "true"
+  LOG_LEVEL = "info"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.checks]]
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "10s"
+    method = "get"
+    path = "/health"

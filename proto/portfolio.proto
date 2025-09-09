@@ -1,0 +1,11 @@
+syntax = "proto3";
+package cl.proto;
+
+message TargetPosition {
+  string portfolio = 1;
+  string instrument = 2;
+  double qty_target = 3;          // normalized weight or shares
+  double max_child_participation = 4; // 0..1
+  double risk_budget = 5;
+  string policy_id = 6;
+}

@@ -1,0 +1,4 @@
+# file: /workspaces/CroweTrade/src/crowetrade/services/research_service/labeling.py
+# hypothesis_version: 6.138.7
+
+[0.0, 'classification', 'features', 'label', 'label_type', 'labeling_config', 'lookahead_window', 'lookback_window', 'metadata', 'price', 'regression', 'sequence', 'threshold', 'timestamp']

@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://crowelogic.io/schemas/signal.schema.json",
+  "title": "Signal",
+  "type": "object",
+  "required": ["instrument", "horizon", "mu", "sigma", "prob_edge_pos", "policy_id"],
+  "properties": {
+    "instrument": {"type": "string"},
+    "horizon": {"type": "string"},
+    "mu": {"type": "number"},
+    "sigma": {"type": "number", "minimum": 0},
+    "prob_edge_pos": {"type": "number", "minimum": 0, "maximum": 1},
+    "policy_id": {"type": "string"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,4 @@
+# file: C:\Users\micha\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\coverage\jsonreport.py
+# hypothesis_version: 6.138.15
+
+['JSON report', 'branch_coverage', 'contexts', 'covered_branches', 'covered_lines', 'excluded_lines', 'executed_branches', 'executed_lines', 'files', 'format', 'meta', 'missing_branches', 'missing_lines', 'num_branches', 'num_partial_branches', 'num_statements', 'percent_covered', 'show_contexts', 'summary', 'timestamp', 'totals', 'version']

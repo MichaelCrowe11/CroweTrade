@@ -1,0 +1,11 @@
+syntax = "proto3";
+package cl.proto;
+
+message Signal {
+  string instrument = 1;
+  string horizon = 2;
+  double mu = 3;                  // forecasted return
+  double sigma = 4;               // forecast std
+  double prob_edge_pos = 5;       // Phi(mu/sigma)
+  string policy_id = 6;           // model policy/version
+}

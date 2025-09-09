@@ -1,0 +1,74 @@
+# Fly.io deployment configuration for crowetrade.com
+# https://fly.io/docs/reference/configuration/
+
+app = "crowetrade"
+primary_region = "ord"  # Chicago - good for US trading hours
+
+[build]
+  dockerfile = "Dockerfile"
+  
+[env]
+  ENVIRONMENT = "production"
+  TRADING_MODE = "PAPER"  # Start with paper trading for safety
+  LOG_LEVEL = "INFO"
+  SERVICE_PORT = "8080"
+  PYTHONPATH = "/app/src"
+  
+[experimental]
+  auto_rollback = true
+
+[[services]]
+  internal_port = 8080
+  processes = ["app"]
+  protocol = "tcp"
+
+  [services.concurrency]
+    hard_limit = 25
+    soft_limit = 20
+    type = "connections"
+
+  [[services.ports]]
+    force_https = true
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.tcp_checks]]
+    grace_period = "10s"
+    interval = "15s"
+    restart_limit = 0
+    timeout = "2s"
+
+  [[services.http_checks]]
+    grace_period = "10s"
+    interval = "30s" 
+    method = "GET"
+    path = "/health"
+    protocol = "http"
+    restart_limit = 0
+    timeout = "5s"
+
+    [services.http_checks.headers]
+      User-Agent = "Fly Health Check"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 2
+  memory_mb = 2048
+
+[deploy]
+  strategy = "rolling"
+
+[metrics]
+  port = 9091
+  path = "/metrics"

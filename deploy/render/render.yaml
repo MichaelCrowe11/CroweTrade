@@ -1,0 +1,42 @@
+# Render.com deployment configuration for crowetrade.com
+services:
+  - type: web
+    name: crowetrade
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile
+    region: oregon  # Good for US trading
+    plan: standard  # $25/month, includes SSL
+    branch: main
+    autoDeploy: true
+    buildCommand: ""
+    startCommand: ""
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: TRADING_MODE
+        value: PAPER
+      - key: LOG_LEVEL
+        value: INFO
+      - key: SERVICE_PORT
+        value: 8080
+      - key: PYTHONPATH
+        value: /app/src
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
+    domains:
+      - crowetrade.com
+    healthCheckPath: /health
+    
+  - type: redis
+    name: crowetrade-redis
+    plan: starter  # Free tier
+    maxmemoryPolicy: allkeys-lru
+    
+  - type: pserv
+    name: crowetrade-postgres
+    plan: starter  # $7/month
+    databaseName: crowetrade
+    databaseUser: crowetrade
+    region: oregon

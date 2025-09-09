@@ -1,0 +1,8 @@
+{
+  "instrument": "AAPL",
+  "horizon": "1d",
+  "mu": 0.0025,
+  "sigma": 0.02,
+  "prob_edge_pos": 0.61,
+  "policy_id": "cs_mom_v1"
+}

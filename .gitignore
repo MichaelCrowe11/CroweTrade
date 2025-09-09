@@ -1,0 +1,96 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+coverage.xml
+*.cover
+
+# Environment Variables
+.env
+.env.local
+.env.production
+.env.development
+*.env
+
+# Logs
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets and Credentials
+*.pem
+*.key
+*.cert
+secrets/
+credentials/
+
+# Docker
+.dockerignore
+
+# Fly.io
+fly.toml.backup
+
+# Trading Data
+data/
+backtest_results/
+models/
+*.h5
+*.pkl
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Documentation build
+docs/_build/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# Node modules (if any frontend added)
+node_modules/
+
+# OS Files
+Thumbs.db
+Desktop.ini
