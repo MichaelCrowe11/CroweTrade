@@ -1,3 +1,10 @@
+"""Model Management Package
+
+This package provides model registry and A/B testing capabilities:
+- ModelRegistry: Centralized model versioning and deployment
+- ABTestEngine: Statistical model comparison and optimization
+"""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -7,6 +14,26 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Protocol
 
 import numpy as np
+
+# Model Registry imports
+from .registry import (
+    ModelRegistry,
+    ModelMetadata, 
+    ModelArtifacts,
+    ModelStatus,
+    ModelType,
+    create_model_metadata
+)
+
+# A/B Testing imports
+from .ab_testing import (
+    ABTestEngine,
+    ABTestConfig,
+    TestArm,
+    AllocationStrategy,
+    TestStatus,
+    create_ab_test
+)
 
 
 class ModelType(Enum):
