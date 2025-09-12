@@ -18,3 +18,34 @@ htmlcov/
 # Env files (do not commit secrets)
 .env
 environments/.env.local
+
+# Node.js dependencies
+node_modules/
+*/node_modules/
+frontend/node_modules/
+
+# Frontend build artifacts
+.next/
+out/
+build/
+
+# Package manager files
+package-lock.json
+yarn.lock
+
+# Editor directories
+.vscode/
+.idea/
+
+# OS files
+Thumbs.db
+ehthumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# Deployment files
+fly.toml.bak
+deploy-crowetrade.ps1.bak
