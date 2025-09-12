@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-# coverage: ignore file
+"""Unified lightweight metrics registry (counters & gauges).
 
-"""Lightweight in-process metrics registry (placeholder for Prometheus exporter).
-
-Provides Counter and Gauge classes with thread-safe updates. Intended to be swapped
-out by a real monitoring backend later; current design keeps API minimal.
+If `prometheus_client` is available it will mirror updates to real Prometheus metrics.
+Otherwise it remains in-process only.
 """
 
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Dict, Tuple
+from typing import Dict
+
+try:  # pragma: no cover - optional
+    from prometheus_client import Counter as PromCounter, Gauge as PromGauge  # type: ignore
+except Exception:  # pragma: no cover
+    PromCounter = None  # type: ignore
+    PromGauge = None  # type: ignore
 
 
 class Counter:
@@ -19,13 +23,16 @@ class Counter:
         self.description = description
         self._lock = Lock()
         self._value = 0.0
+        self._prom = PromCounter(name, description) if PromCounter else None
 
     def inc(self, amount: float = 1.0) -> None:
         with self._lock:
             self._value += amount
+            if self._prom:
+                self._prom.inc(amount)  # type: ignore
 
     @property
-    def value(self) -> float:
+    def value(self) -> float:  # pragma: no cover - trivial
         return self._value
 
 
@@ -35,17 +42,28 @@ class Gauge:
         self.description = description
         self._lock = Lock()
         self._value = 0.0
+        self._prom = PromGauge(name, description) if PromGauge else None
 
     def set(self, value: float) -> None:
         with self._lock:
             self._value = float(value)
+            if self._prom:
+                try:
+                    self._prom.set(value)  # type: ignore
+                except Exception:  # pragma: no cover
+                    pass
 
     def inc(self, amount: float = 1.0) -> None:
         with self._lock:
             self._value += amount
+            if self._prom:
+                try:
+                    self._prom.inc(amount)  # type: ignore
+                except Exception:  # pragma: no cover
+                    pass
 
     @property
-    def value(self) -> float:
+    def value(self) -> float:  # pragma: no cover - trivial
         return self._value
 
 

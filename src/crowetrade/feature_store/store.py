@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from threading import Lock
 from hashlib import sha256
+from crowetrade.monitoring.metrics import REGISTRY
 
 
 def _stable_hash(obj: dict) -> str:
@@ -38,18 +39,24 @@ class FeatureStore:
 
 
 class InMemoryFeatureStore(FeatureStore):
-    def __init__(self):
+    def __init__(self) -> None:
         self._data: MutableMapping[str, list[FeatureRecord]] = {}
 
     def put(self, key: str, values: Mapping[str, float], version: int | None = None) -> FeatureRecord:
         lst = self._data.setdefault(key, [])
         computed_version = (lst[-1].version + 1) if lst else 1
-        # If caller supplies version ensure monotonic; otherwise use computed
         if version is not None and version >= computed_version:
             computed_version = version
         prev_version = lst[-1].version if lst else None
-        rec = FeatureRecord(ts=time(), version=computed_version, values=dict(values), prev_version=prev_version, value_hash=_stable_hash(dict(values)))
+        rec = FeatureRecord(
+            ts=time(),
+            version=computed_version,
+            values=dict(values),
+            prev_version=prev_version,
+            value_hash=_stable_hash(dict(values)),
+        )
         lst.append(rec)
+        REGISTRY.counter("featurestore_inmem_puts").inc()
         return rec
 
     def get(self, key: str) -> FeatureRecord | None:
@@ -57,7 +64,13 @@ class InMemoryFeatureStore(FeatureStore):
         if not lst:
             return None
         last = lst[-1]
-        return FeatureRecord(ts=last.ts, version=last.version, values=dict(last.values), prev_version=last.prev_version, value_hash=last.value_hash)
+        return FeatureRecord(
+            ts=last.ts,
+            version=last.version,
+            values=dict(last.values),
+            prev_version=last.prev_version,
+            value_hash=last.value_hash,
+        )
 
     def batch_get(self, keys: Iterable[str]) -> dict[str, FeatureRecord | None]:
         return {k: self.get(k) for k in keys}
@@ -68,16 +81,28 @@ class InMemoryFeatureStore(FeatureStore):
             return None
         for rec in lst:
             if rec.version == version:
-                return FeatureRecord(ts=rec.ts, version=rec.version, values=dict(rec.values), prev_version=rec.prev_version, value_hash=rec.value_hash)
+                return FeatureRecord(
+                    ts=rec.ts,
+                    version=rec.version,
+                    values=dict(rec.values),
+                    prev_version=rec.prev_version,
+                    value_hash=rec.value_hash,
+                )
         return None
 
     def history(self, key: str, limit: int | None = None) -> Sequence[FeatureRecord]:
         lst = self._data.get(key, [])
-        if limit is None:
-            subset = lst
-        else:
-            subset = lst[-limit:]
-        return [FeatureRecord(ts=r.ts, version=r.version, values=dict(r.values), prev_version=r.prev_version, value_hash=r.value_hash) for r in subset]
+        subset = lst if limit is None else lst[-limit:]
+        return [
+            FeatureRecord(
+                ts=r.ts,
+                version=r.version,
+                values=dict(r.values),
+                prev_version=r.prev_version,
+                value_hash=r.value_hash,
+            )
+            for r in subset
+        ]
 
 
 class DiskFeatureStore(FeatureStore):
@@ -113,6 +138,28 @@ class DiskFeatureStore(FeatureStore):
             }, separators=(",", ":"))
             with path.open("a", encoding="utf-8") as f:
                 f.write(line + "\n")
+            REGISTRY.counter("featurestore_disk_puts").inc()
+            # basic retention: if file > 5MB compact keep last 1000 entries
+            if path.stat().st_size > 5 * 1024 * 1024:  # pragma: no cover - size dependent
+                hist = self._read_all(key)
+                trimmed = hist[-1000:]
+                tmp = path.with_suffix(".tmp")
+                with tmp.open("w", encoding="utf-8") as out:
+                    for r in trimmed:
+                        out.write(
+                            json.dumps(
+                                {
+                                    "ts": r.ts,
+                                    "version": r.version,
+                                    "prev_version": r.prev_version,
+                                    "values": r.values,
+                                    "value_hash": r.value_hash,
+                                },
+                                separators=(",", ":"),
+                            )
+                            + "\n"
+                        )
+                tmp.replace(path)
         return rec
 
     def _read_all(self, key: str) -> list[FeatureRecord]:

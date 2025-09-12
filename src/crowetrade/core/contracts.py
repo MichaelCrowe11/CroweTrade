@@ -32,6 +32,7 @@ class TargetPosition:
     max_child_participation: float
     risk_budget: float
     policy_id: str
+    policy_hash: str | None = None
 
 
 @dataclass

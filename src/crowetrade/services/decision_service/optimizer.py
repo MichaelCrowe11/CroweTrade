@@ -1,10 +1,17 @@
-"""Portfolio Optimizer Module - Stateless Optimization"""
+"""Portfolio Optimizer Module - Stateless Optimization
+
+Enhancements:
+    - Injectible RNG for deterministic testing (max_sharpe / min_variance random search)
+    - Public helper to compute risk contributions for external validation
+    - Minor resiliency (guard against empty assets / missing returns)
+"""
 
 import math
+import random
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Optional, Dict, List
 
 
 class OptimizationMethod(Enum):
@@ -49,8 +56,9 @@ class OptimalPortfolio:
 
 
 class PortfolioOptimizer:
-    def __init__(self, config: OptimizationConfig):
+    def __init__(self, config: OptimizationConfig, rng: Optional[random.Random] = None):
         self.config = config
+        self.rng = rng or random.Random()
         self.optimization_methods = {
             OptimizationMethod.MEAN_VARIANCE: self._mean_variance_optimization,
             OptimizationMethod.RISK_BUDGETING: self._risk_budgeting_optimization,
@@ -58,9 +66,11 @@ class PortfolioOptimizer:
             OptimizationMethod.MIN_VARIANCE: self._min_variance_optimization
         }
         
-    def optimize(self, assets: list[str], expected_returns: dict[str, float],
-                covariance_matrix: dict[tuple[str, str], float], 
-                current_weights: dict[str, float] | None = None) -> OptimalPortfolio:
+    def optimize(self, assets: List[str], expected_returns: Dict[str, float],
+                covariance_matrix: Dict[tuple[str, str], float], 
+                current_weights: Optional[Dict[str, float]] = None) -> OptimalPortfolio:
+        if not assets:
+            raise ValueError("assets list must not be empty")
         
         optimization_fn = self.optimization_methods.get(
             self.config.method, 
@@ -89,8 +99,8 @@ class PortfolioOptimizer:
             }
         )
     
-    def _mean_variance_optimization(self, assets: list[str], expected_returns: dict[str, float],
-                                   covariance_matrix: dict[tuple[str, str], float]) -> dict[str, float]:
+    def _mean_variance_optimization(self, assets: List[str], expected_returns: Dict[str, float],
+                                   covariance_matrix: Dict[tuple[str, str], float]) -> Dict[str, float]:
         n = len(assets)
         equal_weight = 1.0 / n
         
@@ -105,8 +115,8 @@ class PortfolioOptimizer:
         
         return weights
     
-    def _risk_budgeting_optimization(self, assets: list[str], expected_returns: dict[str, float],
-                                    covariance_matrix: dict[tuple[str, str], float]) -> dict[str, float]:
+    def _risk_budgeting_optimization(self, assets: List[str], expected_returns: Dict[str, float],
+                                    covariance_matrix: Dict[tuple[str, str], float]) -> Dict[str, float]:
         n = len(assets)
         risk_budget = 1.0 / n
         
@@ -125,8 +135,8 @@ class PortfolioOptimizer:
         
         return weights
     
-    def _max_sharpe_optimization(self, assets: list[str], expected_returns: dict[str, float],
-                                covariance_matrix: dict[tuple[str, str], float]) -> dict[str, float]:
+    def _max_sharpe_optimization(self, assets: List[str], expected_returns: Dict[str, float],
+                                covariance_matrix: Dict[tuple[str, str], float]) -> Dict[str, float]:
         best_weights = None
         best_sharpe = -float('inf')
         
@@ -142,8 +152,8 @@ class PortfolioOptimizer:
         
         return best_weights or {asset: 1.0/len(assets) for asset in assets}
     
-    def _min_variance_optimization(self, assets: list[str], expected_returns: dict[str, float],
-                                  covariance_matrix: dict[tuple[str, str], float]) -> dict[str, float]:
+    def _min_variance_optimization(self, assets: List[str], expected_returns: Dict[str, float],
+                                  covariance_matrix: Dict[tuple[str, str], float]) -> Dict[str, float]:
         best_weights = None
         min_risk = float('inf')
         
@@ -157,7 +167,7 @@ class PortfolioOptimizer:
         
         return best_weights or {asset: 1.0/len(assets) for asset in assets}
     
-    def _apply_constraints(self, weights: dict[str, float]) -> dict[str, float]:
+    def _apply_constraints(self, weights: Dict[str, float]) -> Dict[str, float]:
         min_weight = self.config.constraints.get("min_weight", 0.0)
         max_weight = self.config.constraints.get("max_weight", 1.0)
         
@@ -167,14 +177,14 @@ class PortfolioOptimizer:
         
         return self._normalize_weights(constrained)
     
-    def _should_rebalance(self, current: dict[str, float], target: dict[str, float]) -> bool:
+    def _should_rebalance(self, current: Dict[str, float], target: Dict[str, float]) -> bool:
         total_deviation = sum(
             abs(current.get(asset, 0.0) - target.get(asset, 0.0)) 
             for asset in set(current) | set(target)
         )
         return total_deviation > self.config.rebalance_threshold
     
-    def _smooth_rebalance(self, current: dict[str, float], target: dict[str, float]) -> dict[str, float]:
+    def _smooth_rebalance(self, current: Dict[str, float], target: Dict[str, float]) -> Dict[str, float]:
         smoothing_factor = 0.3
         smoothed = {}
         
@@ -185,24 +195,23 @@ class PortfolioOptimizer:
         
         return self._normalize_weights(smoothed)
     
-    def _normalize_weights(self, weights: dict[str, float]) -> dict[str, float]:
+    def _normalize_weights(self, weights: Dict[str, float]) -> Dict[str, float]:
         total = sum(weights.values())
         if total == 0:
             return {asset: 1.0/len(weights) for asset in weights}
         return {asset: weight/total for asset, weight in weights.items()}
     
-    def _generate_random_weights(self, assets: list[str]) -> dict[str, float]:
-        import random
-        weights = {asset: random.random() for asset in assets}
+    def _generate_random_weights(self, assets: List[str]) -> Dict[str, float]:
+        weights = {asset: self.rng.random() for asset in assets}
         return self._normalize_weights(weights)
     
-    def _calculate_portfolio_return(self, weights: dict[str, float], 
-                                   expected_returns: dict[str, float]) -> float:
+    def _calculate_portfolio_return(self, weights: Dict[str, float], 
+                                   expected_returns: Dict[str, float]) -> float:
         return sum(weights.get(asset, 0.0) * expected_returns.get(asset, 0.0) 
                   for asset in weights)
     
-    def _calculate_portfolio_risk(self, weights: dict[str, float], 
-                                 covariance_matrix: dict[tuple[str, str], float]) -> float:
+    def _calculate_portfolio_risk(self, weights: Dict[str, float], 
+                                 covariance_matrix: Dict[tuple[str, str], float]) -> float:
         variance = 0.0
         for asset1 in weights:
             for asset2 in weights:
@@ -218,8 +227,8 @@ class PortfolioOptimizer:
             return 0.0
         return (portfolio_return - risk_free_rate) / portfolio_risk
     
-    def _calculate_gradient(self, weights: dict[str, float], expected_returns: dict[str, float],
-                          covariance_matrix: dict[tuple[str, str], float]) -> dict[str, float]:
+    def _calculate_gradient(self, weights: Dict[str, float], expected_returns: Dict[str, float],
+                          covariance_matrix: Dict[tuple[str, str], float]) -> Dict[str, float]:
         gradient = {}
         for asset in weights:
             return_component = -expected_returns.get(asset, 0.0)
@@ -230,8 +239,8 @@ class PortfolioOptimizer:
             gradient[asset] = return_component + risk_component
         return gradient
     
-    def _calculate_risk_contributions(self, weights: dict[str, float],
-                                     covariance_matrix: dict[tuple[str, str], float]) -> dict[str, float]:
+    def _calculate_risk_contributions(self, weights: Dict[str, float],
+                                     covariance_matrix: Dict[tuple[str, str], float]) -> Dict[str, float]:
         portfolio_risk = self._calculate_portfolio_risk(weights, covariance_matrix)
         if portfolio_risk == 0:
             return dict.fromkeys(weights, 0.0)
@@ -246,3 +255,9 @@ class PortfolioOptimizer:
             contributions[asset] = (weights[asset] * marginal_contribution) / portfolio_risk
         
         return contributions
+
+    # Public helpers -----------------------------------------------------
+    def risk_contributions(self, weights: Dict[str, float],
+                           covariance_matrix: Dict[tuple[str, str], float]) -> Dict[str, float]:
+        """Public wrapper for validating risk budgeting in tests."""
+        return self._calculate_risk_contributions(weights, covariance_matrix)
