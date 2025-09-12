@@ -4,6 +4,7 @@ primary_region = "iad"
 
 [build]
   dockerfile = "frontend/Dockerfile"
+  build-target = ""
 
 [env]
   NODE_ENV = "production"
