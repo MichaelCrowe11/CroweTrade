@@ -7,7 +7,8 @@ param(
 function Write-Log {
     param([string]$Message, [string]$Color = "White")
     $timestamp = Get-Date -Format "HH:mm:ss"
-    Write-Host "[$timestamp] $Message" -ForegroundColor $Color
+    Write-Host "[$timestamp] $Mess
+    age" -ForegroundColor $Color
 }
 
 function Show-DetailedSetup {
