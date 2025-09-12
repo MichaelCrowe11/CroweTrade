@@ -21,6 +21,7 @@ class Signal:
     sigma: float
     prob_edge_pos: float
     policy_id: str
+    policy_hash: str | None = None
 
 
 @dataclass

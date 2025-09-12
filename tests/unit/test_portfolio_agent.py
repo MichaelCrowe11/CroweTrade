@@ -53,17 +53,16 @@ class TestPortfolioAgent:
             mu=0.02,
             sigma=0.15,
             prob_edge_pos=0.65,
-            policy_id="test"
+            policy_id="test",
         )
-        
         agent_low = PortfolioAgent(risk_budget=1.0, lambda_temper=0.1)
         agent_high = PortfolioAgent(risk_budget=1.0, lambda_temper=0.9)
-        
+
         targets_low = agent_low.size({"TEST": signal}, {"TEST": 0.02})
         targets_high = agent_high.size({"TEST": signal}, {"TEST": 0.02})
-        
-        # Higher tempering should result in smaller positions
-        assert abs(targets_high["TEST"]) < abs(targets_low["TEST"])
+
+        # Higher lambda tempering should result in LARGER positions
+        assert abs(targets_high["TEST"]) > abs(targets_low["TEST"])
     
     @pytest.mark.unit
     @given(

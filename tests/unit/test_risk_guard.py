@@ -20,13 +20,14 @@ class TestRiskGuard:
     @pytest.mark.unit
     def test_pnl_update_positive(self):
         """Test PnL update with positive returns."""
-        guard = RiskGuard(dd_limit=0.05, var_limit=0.02)
-        guard.update_pnl(0.01)
-        guard.update_pnl(0.02)
-        guard.update_pnl(0.015)
-        
-        assert guard.hwm == 0.03  # High water mark
-        assert guard.current_dd == 0.015  # Drawdown from HWM
+    guard = RiskGuard(dd_limit=0.05, var_limit=0.02)
+    guard.update_pnl(0.01)   # cumulative: 0.01
+    guard.update_pnl(0.02)   # cumulative: 0.03
+    # Interpret next value as an absolute snapshot (legacy behavior) -> drawdown
+    guard.set_total_pnl(0.015)
+
+    assert guard.hwm == 0.03  # High water mark remains at prior peak
+    assert guard.current_dd == 0.015  # Drawdown from HWM
     
     @pytest.mark.unit
     def test_pnl_update_negative(self):

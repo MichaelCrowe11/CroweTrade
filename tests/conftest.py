@@ -12,23 +12,32 @@ if str(SRC) not in sys.path:
 
 @pytest.fixture
 def sample_signal():
-    """Sample signal for testing"""
+    """Sample signal for testing (updated to new Signal contract)."""
     from crowetrade.core.contracts import Signal
     return Signal(
-        instrument="TEST",
-        signal=0.5,
+        instrument="AAPL",
+        horizon="1d",
+        mu=0.05,
+        sigma=0.20,
+        prob_edge_pos=0.7,
         policy_id="test_policy",
-        timestamp=datetime.utcnow()
     )
 
 
 @pytest.fixture
 def sample_feature_vector():
-    """Sample feature vector for testing"""
-    return {
-        "momentum": 0.02,
-        "volatility": 0.15,
-        "volume": 1000000,
-        "rsi": 65,
-        "ma_ratio": 1.02
-    }
+    """Sample FeatureVector matching production contract."""
+    from crowetrade.core.contracts import FeatureVector
+    return FeatureVector(
+        instrument="AAPL",
+        asof=datetime.utcnow(),
+        horizon="1d",
+        values={
+            "mom": 0.02,
+            "vol": 0.15,
+            "volume": 1_000_000,
+            "rsi": 65,
+            "ma_ratio": 1.02,
+        },
+        quality={"lag_ms": 50, "coverage": 1.0},
+    )

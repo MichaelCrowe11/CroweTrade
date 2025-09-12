@@ -50,6 +50,7 @@ def psi(ref: list[float], cur: list[float], bins: int = 10) -> float:
     """
     if not ref and not cur:
         return 0.0
+    # Always derive bin edges from reference where possible for stability
     edges = _bin_edges(ref if ref else cur, bins=bins)
     def hist(x: list[float]) -> list[int]:
         h = [0] * (len(edges) - 1)

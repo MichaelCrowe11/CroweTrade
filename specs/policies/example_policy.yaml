@@ -1,0 +1,17 @@
+id: example_policy_v1
+owner: test
+horizons: ["1d"]
+entry_gate:
+  prob_edge_min: 0.55
+  sigma_max: 0.03
+risk:
+  gross_limit: 1.0
+  net_limit: 0.5
+  dd_intraday: 0.05
+  var_limit: 0.02
+sizing:
+  method: kelly_tempered
+  lambda: 0.25
+execution:
+  algo: POV
+  participation_cap: 0.1

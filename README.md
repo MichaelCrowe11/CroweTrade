@@ -36,3 +36,33 @@ Health endpoints
 
 - Execution: `https://<host>:<port>/health` (local: `http://localhost:18080/health`)
 - Portfolio: `https://<host>:<port>/health` (local: `http://localhost:18081/health`)
+
+## Persistent Feature Store & Policy Hot-Reload
+
+This codebase now includes:
+
+1. Disk-backed Feature Store (`DiskFeatureStore`)
+	- Append-only JSONL per key with auto-incrementing version and SHA-256 content hash.
+	- Retrieval of historical snapshots: `history(key, limit)` and `get_version(key, n)`.
+2. Policy Hot-Reload (`PolicyRegistry`)
+	- Automatic mtime detection; policies reloaded when underlying YAML changes.
+	- Stable `policy_hash` exposed and attached to every emitted `Signal` for auditability.
+
+Example usage:
+
+```python
+from crowetrade.feature_store.store import DiskFeatureStore
+from crowetrade.core.policy import PolicyRegistry
+
+fs = DiskFeatureStore("./feature_history")
+fs.put("AAPL", {"mom": 0.12, "vol": 0.34})
+print(fs.get("AAPL").version)
+print(len(fs.history("AAPL")))
+
+registry = PolicyRegistry("specs/policies")
+pol = registry.load("cs_mom_v1")
+print(registry.policy_hash("cs_mom_v1"))
+```
+
+Backward compatibility: `InMemoryFeatureStore.put(key, values, version=...)` still accepted.
+

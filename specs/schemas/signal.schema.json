@@ -10,7 +10,8 @@
     "mu": {"type": "number"},
     "sigma": {"type": "number", "minimum": 0},
     "prob_edge_pos": {"type": "number", "minimum": 0, "maximum": 1},
-    "policy_id": {"type": "string"}
+  "policy_id": {"type": "string"},
+  "policy_hash": {"type": ["string", "null"], "minLength": 1}
   },
   "additionalProperties": false
 }
