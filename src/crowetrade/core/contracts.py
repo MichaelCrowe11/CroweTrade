@@ -42,3 +42,26 @@ class Fill:
     price: float
     ts: datetime
     venue: str
+
+
+@dataclass
+class MarketDataEvent:
+    symbol: str
+    price: float
+    volume: float
+    timestamp: datetime
+    bid: float | None = None
+    ask: float | None = None
+    spread: float | None = None
+
+
+@dataclass  
+class RegimeChangeEvent:
+    timestamp: datetime
+    previous_regime: str
+    new_regime: str
+    confidence: float
+    volatility: float
+    turbulence: float
+    probabilities: dict[str, float]
+    metadata: dict[str, any] = None
