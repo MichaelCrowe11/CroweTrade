@@ -1,0 +1,33 @@
+// CroweLang Example: CroweTrade Financial Agent
+import "crowetrade" as ct;
+
+agent MomentumMeanRevAgent {
+  state {
+    lookback_fast: int = 20;
+    lookback_slow: int = 100;
+    z_entry: float = 1.5;
+    z_exit: float = 0.3;
+  }
+
+  stream Bar(symbol: string, close: float, volume: float, ts: datetime);
+
+  computed fast_ma = SMA(Bar.close, lookback_fast);
+  computed slow_ma = SMA(Bar.close, lookback_slow);
+  computed spread = fast_ma - slow_ma;
+  computed zscore = ZScore(spread, 200);
+
+  signal mean_reversion_long when zscore < -z_entry => +1.0 size;
+  signal mean_reversion_flat when abs(zscore) < z_exit => 0.0 size;
+  signal mean_reversion_short when zscore > z_entry => -1.0 size;
+
+  risk {
+    max_position_notional  = 1_000_000;
+    max_gross_leverage     = 2.0;
+    max_intraday_drawdown  = 0.02;
+  }
+
+  execution {
+    algo = POV;
+    participation_cap = 0.1;
+  }
+}
