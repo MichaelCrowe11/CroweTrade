@@ -9,6 +9,12 @@ build/
 venv/
 .DS_Store
 
+# Test artifacts
+.hypothesis/
+coverage.xml
+htmlcov/
+.coverage*
+
 # Env files (do not commit secrets)
 .env
 environments/.env.local
