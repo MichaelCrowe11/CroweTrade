@@ -26,11 +26,9 @@ primary_region = "iad"
 
 # Health checks
 [[services]]
-  http_checks = []
   internal_port = 3000
   processes = ["app"]
   protocol = "tcp"
-  script_checks = []
 
   [services.concurrency]
     hard_limit = 25

@@ -25,7 +25,7 @@ jobs:
     
     - name: Deploy Web Frontend
       run: |
-        flyctl deploy --config fly.web.toml --app crowetrade-web
+        flyctl deploy --config fly.frontend.toml --app crowetrade-web --remote-only
       env:
         FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
@@ -80,10 +80,10 @@ jobs:
     - name: Configure Domains
       run: |
         # Add custom domains
-        flyctl certs add crowetrade.com --app crowetrade-web || true
-        flyctl certs add www.crowetrade.com --app crowetrade-web || true
-        flyctl certs add api.crowetrade.com --app crowetrade-execution || true
-        flyctl certs add portfolio.crowetrade.com --app crowetrade-portfolio || true
+        flyctl certs create crowetrade.com --app crowetrade-web || true
+        flyctl certs create www.crowetrade.com --app crowetrade-web || true
+        flyctl certs create api.crowetrade.com --app crowetrade-execution || true
+        flyctl certs create portfolio.crowetrade.com --app crowetrade-portfolio || true
         
         # Show certificate status
         flyctl certs list --app crowetrade-web
