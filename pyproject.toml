@@ -12,6 +12,10 @@ license = { text = "MIT" }
 authors = [ { name = "Crowe Logic" } ]
 dependencies = [
   "numpy>=1.24",
+  "pyarrow>=14.0.0",
+  "pyyaml>=6.0",
+  "watchdog>=3.0.0",
+  "pydantic>=2.0.0",
 ]
 
 [project.optional-dependencies]

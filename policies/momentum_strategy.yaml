@@ -1,0 +1,40 @@
+name: momentum_strategy
+version: 1.0.0
+enabled: true
+description: Momentum trading strategy with risk controls
+author: CroweTrade Team
+created_at: "2024-01-11"
+tags:
+  - momentum
+  - equity
+  - production
+
+gates:
+  min_confidence: 0.6
+  max_correlation: 0.8
+  min_volume: 100000
+
+position_limits:
+  AAPL: 100000
+  GOOGL: 75000
+  MSFT: 80000
+  default: 50000
+
+risk_params:
+  max_position_size: 100000
+  max_portfolio_risk: 0.02
+  max_drawdown: 0.05
+  daily_loss_limit: 10000
+  var_confidence: 0.95
+
+strategy_params:
+  lookback_period: 20
+  momentum_threshold: 0.02
+  rebalance_frequency: daily
+  signal_decay: 0.95
+
+indicators:
+  - RSI
+  - MACD
+  - BollingerBands
+  - VWAP
