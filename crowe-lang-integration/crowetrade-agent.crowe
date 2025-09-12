@@ -1,0 +1,344 @@
+// CroweLang Example: CroweTrade Financial Agent
+// Demonstrates integration with CroweTrade's Python-based agent ecosystem
+
+import "crowetrade" as ct;
+import { SMA, EMA, RSI, MACD, BollingerBands } from "crowelang/indicators";
+import { RiskManager, PositionLimit, VaRLimit } from "crowelang/risk";
+
+// Define a parallel agent for market analysis
+agent MarketAnalysisAgent {
+  state {
+    market_regime: string = "neutral";
+    volatility_level: float = 0.0;
+    trend_strength: float = 0.0;
+    correlation_matrix: Map<string, float> = {};
+  }
+  
+  contract {
+    name = "market_analysis";
+    version = "1.0.0";
+    requires = ["market_data", "historical_data"];
+    provides = ["regime_detection", "volatility_forecast"];
+  }
+  
+  computed {
+    regime_score: float = {
+      const bull_score = trend_strength * (1 - volatility_level);
+      const bear_score = -trend_strength * (1 + volatility_level);
+      return bull_score > 0.5 ? bull_score : bear_score;
+    }
+  }
+  
+  action analyze_market(bars: Bar[]) {
+    // Calculate market regime
+    const sma_20 = SMA(bars.map(b => b.close), 20);
+    const sma_50 = SMA(bars.map(b => b.close), 50);
+    
+    if (sma_20 > sma_50 * 1.02) {
+      this.market_regime = "bullish";
+    } else if (sma_20 < sma_50 * 0.98) {
+      this.market_regime = "bearish";
+    } else {
+      this.market_regime = "neutral";
+    }
+    
+    // Calculate volatility
+    this.volatility_level = StdDev(bars.map(b => b.close), 20) / sma_20;
+    
+    // Broadcast regime change
+    broadcast("regime_change", {
+      regime: this.market_regime,
+      volatility: this.volatility_level,
+      timestamp: Date.now()
+    });
+  }
+  
+  action calculate_correlations(symbols: string[], data: Map<string, Bar[]>) {
+    for (const sym1 of symbols) {
+      for (const sym2 of symbols) {
+        if (sym1 !== sym2) {
+          const corr = Correlation(
+            data[sym1].map(b => b.close),
+            data[sym2].map(b => b.close),
+            30
+          );
+          this.correlation_matrix[`${sym1}_${sym2}`] = corr;
+        }
+      }
+    }
+  }
+}
+
+// Main trading strategy that uses the market analysis agent
+strategy CroweTradeMultiAgent {
+  params {
+    initial_capital: float = 1000000;
+    max_positions: int = 10;
+    position_size: float = 0.05;
+    
+    // Strategy parameters
+    momentum_period: int = 14;
+    mean_reversion_zscore: float = 2.0;
+    breakout_period: int = 20;
+    
+    // Risk parameters
+    max_drawdown: float = 0.10;
+    position_limit: float = 0.15;
+    daily_var_limit: float = 0.03;
+  }
+  
+  // Connect to market analysis agent
+  agents {
+    market_analyzer = MarketAnalysisAgent();
+    execution_engine = ct.ExecutionEngine();
+    risk_manager = ct.RiskManager();
+  }
+  
+  indicators {
+    // Momentum indicators
+    rsi = RSI(close, momentum_period);
+    macd = MACD(close, 12, 26, 9);
+    
+    // Mean reversion indicators
+    bb = BollingerBands(close, 20, 2);
+    zscore = (close - bb.middle) / bb.std;
+    
+    // Trend indicators
+    ema_fast = EMA(close, 12);
+    ema_slow = EMA(close, 26);
+    trend = ema_fast - ema_slow;
+  }
+  
+  signals {
+    // Momentum signals
+    momentum_long = rsi < 30 and macd.signal > macd.macd;
+    momentum_short = rsi > 70 and macd.signal < macd.macd;
+    
+    // Mean reversion signals
+    reversion_long = close < bb.lower and zscore < -mean_reversion_zscore;
+    reversion_short = close > bb.upper and zscore > mean_reversion_zscore;
+    
+    // Breakout signals
+    breakout_long = close > highest(high, breakout_period);
+    breakout_short = close < lowest(low, breakout_period);
+    
+    // Combined signal based on market regime
+    long_signal = market_analyzer.market_regime == "bullish" ? 
+                  (momentum_long or breakout_long) :
+                  reversion_long;
+                  
+    short_signal = market_analyzer.market_regime == "bearish" ?
+                   (momentum_short or breakout_short) :
+                   reversion_short;
+  }
+  
+  rules {
+    // Entry rules with risk checks
+    when (long_signal and not has_position(symbol)) {
+      const risk_check = risk_manager.check_limits({
+        position_size: position_size * capital,
+        symbol: symbol,
+        side: "long"
+      });
+      
+      if (risk_check.approved) {
+        const order = execution_engine.smart_order({
+          symbol: symbol,
+          side: "buy",
+          quantity: position_size * capital / close,
+          algo: "TWAP",
+          duration: 300  // 5 minutes
+        });
+        
+        log(`Long entry: ${symbol} @ ${close}, order_id: ${order.id}`);
+      }
+    }
+    
+    when (short_signal and not has_position(symbol)) {
+      const risk_check = risk_manager.check_limits({
+        position_size: position_size * capital,
+        symbol: symbol,
+        side: "short"
+      });
+      
+      if (risk_check.approved) {
+        const order = execution_engine.smart_order({
+          symbol: symbol,
+          side: "short",
+          quantity: position_size * capital / close,
+          algo: "VWAP",
+          duration: 600  // 10 minutes
+        });
+        
+        log(`Short entry: ${symbol} @ ${close}, order_id: ${order.id}`);
+      }
+    }
+    
+    // Exit rules
+    when (has_position(symbol) and position_pnl(symbol) > 0.02) {
+      // Take profit at 2%
+      execution_engine.close_position(symbol, "market");
+      log(`Take profit: ${symbol} @ ${close}`);
+    }
+    
+    when (has_position(symbol) and position_pnl(symbol) < -0.01) {
+      // Stop loss at 1%
+      execution_engine.close_position(symbol, "market");
+      log(`Stop loss: ${symbol} @ ${close}`);
+    }
+    
+    // Emergency exit on high correlation
+    when (market_analyzer.correlation_matrix[`${symbol}_SPY`] > 0.9) {
+      if (has_position(symbol)) {
+        execution_engine.close_position(symbol, "market");
+        log(`High correlation exit: ${symbol}`);
+      }
+    }
+  }
+  
+  risk {
+    max_position = position_limit * capital;
+    max_portfolio_var = daily_var_limit * capital;
+    max_drawdown = max_drawdown;
+    max_correlation_exposure = 0.7;
+    
+    // Dynamic position sizing based on volatility
+    position_size = base_position_size / (1 + market_analyzer.volatility_level);
+    
+    // Portfolio hedging
+    hedge_ratio = calculate_hedge_ratio(positions, "SPY");
+    hedge_threshold = 0.5;
+  }
+  
+  events {
+    on_bar(bar: Bar) {
+      // Update market analysis
+      market_analyzer.analyze_market(get_recent_bars(bar.symbol, 100));
+      
+      // Check portfolio risk
+      const portfolio_risk = risk_manager.calculate_portfolio_risk(positions);
+      if (portfolio_risk.var > max_portfolio_var) {
+        reduce_positions(0.5);
+      }
+    }
+    
+    on_fill(fill: Fill) {
+      // Update position tracking
+      update_position(fill);
+      
+      // Send to CroweTrade for execution analytics
+      ct.analytics.record_fill({
+        strategy: "CroweTradeMultiAgent",
+        fill: fill,
+        market_regime: market_analyzer.market_regime,
+        signals: get_active_signals()
+      });
+    }
+    
+    on_regime_change(event: RegimeChangeEvent) {
+      log(`Market regime changed to: ${event.regime}`);
+      
+      // Adjust position sizes based on new regime
+      if (event.regime == "high_volatility") {
+        reduce_all_positions(0.3);
+      }
+    }
+    
+    on_day_end() {
+      // Daily risk and performance reporting
+      const daily_report = {
+        pnl: calculate_daily_pnl(),
+        var: risk_manager.calculate_var(0.95),
+        sharpe: calculate_sharpe_ratio(),
+        positions: positions.length,
+        regime: market_analyzer.market_regime
+      };
+      
+      ct.reporting.send_daily_report(daily_report);
+    }
+  }
+}
+
+// Execution algorithm definitions
+algorithm TWAP {
+  params {
+    duration: int = 300;  // seconds
+    slices: int = 10;
+    urgency: float = 0.5;
+  }
+  
+  execute(order: Order) {
+    const slice_size = order.quantity / slices;
+    const interval = duration / slices;
+    
+    for (let i = 0; i < slices; i++) {
+      schedule_order({
+        quantity: slice_size,
+        time: now() + i * interval,
+        type: urgency > 0.7 ? "market" : "limit",
+        price: urgency > 0.7 ? null : mid_price * (1 - 0.001)
+      });
+    }
+  }
+}
+
+algorithm VWAP {
+  params {
+    participation_rate: float = 0.1;
+    min_fill_size: int = 100;
+  }
+  
+  execute(order: Order) {
+    const historical_volume = get_volume_profile(order.symbol, 20);
+    const expected_volume = predict_volume(historical_volume);
+    
+    for (const period of expected_volume) {
+      const target_quantity = period.volume * participation_rate;
+      if (target_quantity >= min_fill_size) {
+        place_order({
+          quantity: min(target_quantity, remaining_quantity),
+          type: "limit",
+          price: period.vwap * (order.side == "buy" ? 0.999 : 1.001)
+        });
+      }
+    }
+  }
+}
+
+// Backtest configuration for CroweTrade
+backtest CroweTradeConfig {
+  data_source = "crowetrade.polygon";
+  start_date = "2023-01-01";
+  end_date = "2023-12-31";
+  initial_capital = 1000000;
+  
+  universe = ct.universe.get_liquid_stocks(min_volume = 1000000, count = 50);
+  frequency = MINUTE;
+  
+  execution {
+    mode = "realistic";  // Use realistic fill simulation
+    latency = 10;  // milliseconds
+    slippage = ct.models.NonLinearSlippage(impact = 0.0001);
+  }
+  
+  costs {
+    commission = ct.brokers.interactive_brokers.tiered_pricing;
+    borrow_rate = 0.025;  // 2.5% annual
+    market_data_fee = 500;  // monthly
+  }
+  
+  parallel {
+    agents = ["MarketAnalysisAgent", "ExecutionEngine", "RiskManager"];
+    mode = "distributed";
+    sync_interval = 1000;  // milliseconds
+  }
+  
+  output {
+    metrics = true;
+    attribution = true;
+    risk_decomposition = true;
+    execution_analysis = true;
+    regime_analysis = true;
+    save_to = "crowetrade_results/";
+  }
+}
