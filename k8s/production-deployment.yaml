@@ -1,0 +1,355 @@
+# Kubernetes Deployment for CroweTrade AI Trading Infrastructure
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crowetrade-production
+  labels:
+    environment: production
+    app: crowetrade
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crowetrade-trading-engine
+  namespace: crowetrade-production
+  labels:
+    app: crowetrade
+    component: trading-engine
+    version: blue
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: crowetrade
+      component: trading-engine
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: crowetrade
+        component: trading-engine
+        version: blue
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: trading-engine
+        image: ghcr.io/michaelcrowe11/crowetrade:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: CROWETRADE_ENV
+          value: "production"
+        - name: CROWETRADE_CONFIG_DIR
+          value: "/app/config"
+        - name: POSTGRES_HOST
+          valueFrom:
+            secretKeyRef:
+              name: crowetrade-secrets
+              key: postgres-host
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: crowetrade-secrets
+              key: postgres-user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: crowetrade-secrets
+              key: postgres-password
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: crowetrade-secrets
+              key: redis-host
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: crowetrade-secrets
+              key: redis-password
+        command: ["python", "-m", "crowetrade.services.trading_engine"]
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+        - name: data
+          mountPath: /app/data
+      volumes:
+      - name: config
+        configMap:
+          name: crowetrade-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: crowetrade-data
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crowetrade-model-registry
+  namespace: crowetrade-production
+  labels:
+    app: crowetrade
+    component: model-registry
+    version: blue
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: crowetrade
+      component: model-registry
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: crowetrade
+        component: model-registry
+        version: blue
+    spec:
+      containers:
+      - name: model-registry
+        image: ghcr.io/michaelcrowe11/crowetrade:latest
+        ports:
+        - containerPort: 8081
+          name: http
+        env:
+        - name: CROWETRADE_ENV
+          value: "production"
+        - name: CROWETRADE_MODELS_DIR
+          value: "/app/models"
+        command: ["python", "-m", "crowetrade.services.model_registry"]
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: models
+          mountPath: /app/models
+      volumes:
+      - name: models
+        persistentVolumeClaim:
+          claimName: crowetrade-models
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crowetrade-backtesting
+  namespace: crowetrade-production
+  labels:
+    app: crowetrade
+    component: backtesting
+    version: blue
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: crowetrade
+      component: backtesting
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: crowetrade
+        component: backtesting
+        version: blue
+    spec:
+      containers:
+      - name: backtesting-engine
+        image: ghcr.io/michaelcrowe11/crowetrade:latest
+        ports:
+        - containerPort: 8082
+          name: http
+        env:
+        - name: CROWETRADE_ENV
+          value: "production"
+        - name: CROWETRADE_DATA_DIR
+          value: "/app/data"
+        command: ["python", "-m", "crowetrade.services.backtesting"]
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "4"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8082
+          initialDelaySeconds: 60
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8082
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        volumeMounts:
+        - name: data
+          mountPath: /app/data
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: crowetrade-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crowetrade-trading-engine
+  namespace: crowetrade-production
+  labels:
+    app: crowetrade
+    component: trading-engine
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  - port: 9090
+    targetPort: 9090
+    name: metrics
+  selector:
+    app: crowetrade
+    component: trading-engine
+    version: blue
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crowetrade-model-registry
+  namespace: crowetrade-production
+  labels:
+    app: crowetrade
+    component: model-registry
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 8081
+    targetPort: 8081
+    name: http
+  selector:
+    app: crowetrade
+    component: model-registry
+    version: blue
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crowetrade-backtesting
+  namespace: crowetrade-production
+  labels:
+    app: crowetrade
+    component: backtesting
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 8082
+    targetPort: 8082
+    name: http
+  selector:
+    app: crowetrade
+    component: backtesting
+    version: blue
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: crowetrade-data
+  namespace: crowetrade-production
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: fast-ssd
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: crowetrade-models
+  namespace: crowetrade-production
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: fast-ssd
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crowetrade-config
+  namespace: crowetrade-production
+data:
+  production.yaml: |
+    # Production Configuration (embedded)
+    environment: production
+    debug: false
+    log_level: INFO
+    
+    services:
+      model_registry:
+        enabled: true
+        port: 8081
+      trading_engine:
+        enabled: true
+        port: 8080
+      backtesting:
+        enabled: true
+        port: 8082
+    
+    risk:
+      max_leverage: 3.0
+      var_limit: 0.02
+      drawdown_limit: 0.05

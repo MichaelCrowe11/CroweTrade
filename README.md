@@ -1,25 +1,119 @@
-# CroweTrade
+# CroweTrade AI Trading Infrastructure
 
-This repository contains the architecture and a minimal Python skeleton for the Crowe Logic Parallel Financial Agent Ecosystem.
+This repository contains the comprehensive **Crowe Logic Parallel Financial Agent Ecosystem** - a production-grade cryptocurrency and traditional asset trading platform with advanced AI-driven strategies, risk management, and multi-venue execution capabilities.
 
-Quick start
+## 🚀 Quick Start
 
-- Install (development): `pip install -e .[dev]`
+### Development Setup
+- Install: `pip install -e .[dev]`
 - Run tests: `pytest -q`
 - Lint/format: `ruff check . && black --check .`
 
-Key paths
+### Crypto Trading Activation
+```bash
+# Demo mode (safe testing)
+python activate_crypto_trading.py --demo
 
-- `src/crowetrade/` — core contracts and live agents
-- `specs/` — JSON Schemas and examples for core events; policy examples
-- `.github/instructions/Architecture.instructions.md` — full blueprint
-- `.github/workflows/ci.yml` — CI pipeline
+# Live trading (requires API credentials)
+export COINBASE_API_KEY="your_api_key"
+export COINBASE_API_SECRET="your_secret"
+export COINBASE_PASSPHRASE="your_passphrase"
+python activate_crypto_trading.py --monitor 60
+```
 
-Roadmap
+## 🏗️ Architecture Overview
 
-- Sprint 0: scaffolding, contracts, schemas, CI (this PR)
-- Sprint 1: feature store, optimizer, risk overlays, backtest stub
-- Sprint 2: execution, TCA, governance hooks, canary mode
+**CroweTrade** implements a sophisticated parallel agent ecosystem designed for quantitative trading across cryptocurrency and traditional markets. The system features:
+
+- **24 AI Research Scientists** (Quant Pods) continuously developing new strategies
+- **Multi-Venue Execution** with smart order routing and transaction cost analysis
+- **Advanced Risk Management** with real-time VaR, regime detection, and circuit breakers
+- **Cryptocurrency Integration** supporting Bitcoin, Ethereum, and major altcoins
+- **Cross-Chain Wallet Management** with hot/cold storage and multi-signature security
+
+### Key Components
+
+- `src/crowetrade/` — Core trading infrastructure and live agents
+- `src/crowetrade/services/crypto_trading_service.py` — Comprehensive crypto trading orchestrator
+- `src/crowetrade/services/execution_service/coinbase_adapter.py` — Coinbase Pro API integration
+- `src/crowetrade/data/crypto_market_data.py` — Multi-exchange market data aggregation
+- `src/crowetrade/services/crypto_wallet.py` — Multi-network cryptocurrency wallet management
+- `src/crowetrade/risk/crypto_risk.py` — Cryptocurrency-specific risk controls
+- `config/crypto_trading.yaml` — Comprehensive crypto trading configuration
+- `specs/` — JSON schemas and policy examples for core trading events
+- `.github/instructions/Architecture.instructions.md` — Complete system blueprint
+
+## 🎯 Crypto Trading Capabilities
+
+### Supported Exchanges
+- **Coinbase Pro** - Live trading with WebSocket streaming
+- **Binance** - Market data aggregation
+- **Kraken** - Market data aggregation
+
+### Supported Assets
+- **Bitcoin (BTC)** - Primary cryptocurrency with advanced microstructure analysis
+- **Ethereum (ETH)** - Smart contract platform with gas optimization
+- **Cardano (ADA)** - Proof-of-stake blockchain
+- **Solana (SOL)** - High-performance blockchain
+- **Polygon (MATIC)** - Ethereum scaling solution
+- **USD Coin (USDC)** - Stablecoin for cash management
+
+### Advanced Features
+- **Real-Time Market Data** from multiple exchanges with consensus pricing
+- **Cross-Chain Bridge Integration** for Polygon and BSC networks
+- **Hardware Wallet Support** with Ledger and Trezor integration
+- **Multi-Signature Security** with customizable signing requirements
+- **Volatility-Adjusted Position Sizing** using Kelly criterion
+- **Regime-Based Risk Management** with market stress detection
+- **Advanced Order Types** including VWAP, TWAP, and smart limit ladders
+
+## 📈 Trading Strategies
+
+The system implements multiple quantitative strategies:
+
+1. **Momentum Strategies** - Cross-sectional and time-series momentum with regime awareness
+2. **Mean Reversion** - Statistical arbitrage with volatility clustering
+3. **Cross-Asset Arbitrage** - Multi-venue price discrepancy exploitation  
+4. **Trend Following** - Multi-timeframe trend detection with adaptive filters
+5. **Microstructure Alpha** - Order book imbalance and flow toxicity signals
+
+## 🛡️ Risk Management
+
+### Portfolio Risk Controls
+- **Value-at-Risk (VaR)** monitoring with 1-day and 7-day horizons
+- **Maximum Drawdown** limits with real-time circuit breakers
+- **Position Sizing** using Kelly-tempered allocation
+- **Correlation Limits** preventing over-concentration
+- **Volatility Targeting** with dynamic exposure scaling
+
+### Crypto-Specific Risk Features
+- **Regime Detection** identifying high-volatility periods
+- **Liquidity Monitoring** across multiple exchanges
+- **Cross-Chain Risk** assessment for bridge operations
+- **Custody Controls** with hot/cold wallet thresholds
+
+## 🔧 Development Roadmap
+
+### ✅ Completed (Production Ready)
+- Core trading infrastructure with parallel agents
+- Coinbase Pro integration with real-time WebSocket
+- Multi-exchange crypto market data feeds
+- Comprehensive crypto wallet management
+- Advanced crypto-specific risk controls
+- Production deployment infrastructure
+- Persistent feature store with policy hot-reload
+
+### 🚧 In Progress
+- Additional exchange integrations (Binance, Kraken live trading)
+- DeFi protocol integration (Uniswap, Aave)
+- Advanced machine learning models
+- Real-time performance attribution
+
+### 🎯 Future Enhancements
+- Options and derivatives trading
+- Cross-chain MEV strategies
+- Yield farming automation
+- NFT market making
 
 Deployment
 

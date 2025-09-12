@@ -1,5 +1,5 @@
-# Fly.io app config for Portfolio service
-app = "crowetrade-portfolio"
+# Fly.io app config for CroweTrade Portfolio Service
+app = "crowetrade-portfolio" 
 primary_region = "iad"
 
 [build]
@@ -9,8 +9,11 @@ primary_region = "iad"
   PYTHONUNBUFFERED = "1"
   PYTHONPATH = "/app/src"
   RUN_MODE = "production"
-  PAPER_MODE = "true"
+  PAPER_MODE = "false"
   LOG_LEVEL = "info"
+  CORS_ORIGINS = "https://crowetrade.com,https://www.crowetrade.com"
+  # Crypto portfolio management enabled
+  CRYPTO_PORTFOLIO_ENABLED = "true"
 
 [[services]]
   internal_port = 8080
@@ -24,8 +27,12 @@ primary_region = "iad"
     port = 443
 
   [[services.checks]]
-    interval = "10s"
-    timeout = "2s"
-    grace_period = "10s"
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "20s"
     method = "get"
     path = "/health"
+
+# Custom domain configuration  
+[[certificates]]
+  hostname = "portfolio.crowetrade.com"

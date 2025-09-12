@@ -6,6 +6,11 @@ const nextConfig = {
   experimental: {
     optimizeCss: true,
   },
+  env: {
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'https://api.crowetrade.com',
+    NEXT_PUBLIC_PORTFOLIO_URL: process.env.NEXT_PUBLIC_PORTFOLIO_URL || 'https://portfolio.crowetrade.com',
+    NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL || 'https://crowetrade.com',
+  },
   webpack: (config) => {
     config.externals = [...config.externals, { canvas: 'canvas' }];
     return config;

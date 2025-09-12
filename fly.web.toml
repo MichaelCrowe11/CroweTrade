@@ -1,0 +1,37 @@
+# Fly.io app config for CroweTrade Web Frontend
+app = "crowetrade-web"
+primary_region = "iad"
+
+[build]
+  dockerfile = "docker/Dockerfile.web"
+
+[env]
+  NODE_ENV = "production"
+  NEXT_PUBLIC_API_URL = "https://api.crowetrade.com"
+  NEXT_PUBLIC_PORTFOLIO_URL = "https://portfolio.crowetrade.com"
+  NEXT_PUBLIC_SITE_URL = "https://crowetrade.com"
+
+[[services]]
+  internal_port = 3000
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "get"
+    path = "/"
+
+# Custom domain configuration
+[[certificates]]
+  hostname = "crowetrade.com"
+
+[[certificates]]
+  hostname = "www.crowetrade.com"

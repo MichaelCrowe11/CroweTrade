@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@coinbase/cdp-sdk": "^1.8.0",
+    "@coinbase/onchainkit": "^0.38.19"
+  }
+}

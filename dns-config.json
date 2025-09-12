@@ -1,0 +1,26 @@
+{
+  "records": {
+    "api": {
+      "type": "CNAME",
+      "ttl": "1800",
+      "value": "crowetrade-execution.fly.dev"
+    },
+    "www": {
+      "type": "CNAME",
+      "ttl": "1800",
+      "value": "crowetrade-web.fly.dev"
+    },
+    "@": {
+      "type": "CNAME",
+      "ttl": "1800",
+      "value": "crowetrade-web.fly.dev"
+    },
+    "portfolio": {
+      "type": "CNAME",
+      "ttl": "1800",
+      "value": "crowetrade-portfolio.fly.dev"
+    }
+  },
+  "timestamp": "2025-09-11 22:10:16",
+  "domain": "crowetrade.com"
+}

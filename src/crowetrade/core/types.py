@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 from typing import NewType, TypeAlias
+from dataclasses import dataclass
 
 OrderId = NewType('OrderId', str)
 RequestId = NewType('RequestId', str)
@@ -47,3 +48,25 @@ class AgentState(Enum):
     PAUSED = "PAUSED"
     ERROR = "ERROR"
     STOPPED = "STOPPED"
+
+
+class HealthStatus(Enum):
+    HEALTHY = "HEALTHY"
+    DEGRADED = "DEGRADED"
+    UNHEALTHY = "UNHEALTHY"
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclass
+class Signal:
+    """Trading signal with strength, confidence, and metadata"""
+    symbol: str
+    strength: float  # -1.0 to 1.0 (negative = sell, positive = buy)
+    confidence: float  # 0.0 to 1.0
+    timestamp: datetime
+    strategy: str
+    metadata: dict = None
+    
+    def __post_init__(self):
+        if self.metadata is None:
+            self.metadata = {}

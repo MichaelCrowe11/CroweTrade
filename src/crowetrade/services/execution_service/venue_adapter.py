@@ -149,14 +149,26 @@ class FIXVenueAdapter(VenueAdapter):
 
 
 def create_venue_adapter(config: VenueConfig) -> VenueAdapter:
-    """Factory selecting adapter based on env.
+    """Factory selecting adapter based on env and venue type.
 
     - RUN_MODE=production and PAPER_MODE=true -> NoTradeVenueAdapter (safe, no live fills)
+    - RUN_MODE=production and venue supports crypto -> CoinbaseProVenueAdapter or other crypto adapters
     - RUN_MODE=production and PAPER_MODE!=true -> raise until real adapter exists
     - Else -> MockVenueAdapter for local/dev
     """
     run_mode = os.environ.get("RUN_MODE", "development").lower()
     paper_mode = os.environ.get("PAPER_MODE", "false").lower() in {"1", "true", "yes"}
+    
+    # Check if this is a crypto venue configuration
+    if hasattr(config, 'api_key') and config.name in ['coinbase_pro', 'coinbase']:
+        # Import here to avoid circular imports
+        try:
+            from crowetrade.services.execution_service.coinbase_adapter import CoinbaseProVenueAdapter, CoinbaseConfig
+            if isinstance(config, CoinbaseConfig):
+                return CoinbaseProVenueAdapter(config)
+        except ImportError as e:
+            print(f"⚠️ Coinbase adapter import failed: {e}")
+    
     if run_mode == "production":
         if paper_mode:
             return NoTradeVenueAdapter(config)

@@ -1,0 +1,226 @@
+# Production Configuration for CroweTrade AI Trading Infrastructure
+
+# Environment
+environment: production
+debug: false
+log_level: INFO
+
+# Core Services Configuration
+services:
+  model_registry:
+    enabled: true
+    port: 8081
+    data_dir: /app/models
+    max_models_per_strategy: 50
+    cleanup_interval: 3600  # 1 hour
+    backup_enabled: true
+    backup_interval: 21600  # 6 hours
+    
+  ab_testing:
+    enabled: true
+    default_algorithm: thompson_sampling
+    min_samples_for_significance: 100
+    significance_level: 0.05
+    early_stopping_enabled: true
+    
+  backtesting:
+    enabled: true
+    port: 8082
+    max_concurrent_tests: 10
+    data_cache_size: 1000000  # 1M rows
+    transaction_cost_model: realistic
+    
+  trading_engine:
+    enabled: true
+    port: 8080
+    risk_checks_enabled: true
+    max_position_size: 1000000  # $1M
+    max_daily_loss: 50000      # $50K
+    
+# Database Configuration
+database:
+  host: ${POSTGRES_HOST}
+  port: 5432
+  database: crowetrade_prod
+  user: ${POSTGRES_USER}
+  password: ${POSTGRES_PASSWORD}
+  pool_size: 20
+  max_overflow: 30
+  pool_timeout: 30
+  
+# Redis Configuration (for caching and messaging)
+redis:
+  host: ${REDIS_HOST}
+  port: 6379
+  password: ${REDIS_PASSWORD}
+  db: 0
+  max_connections: 100
+  
+# Message Queue Configuration
+messaging:
+  broker_url: ${KAFKA_BROKER_URL}
+  topics:
+    signals: crowetrade.signals
+    positions: crowetrade.positions
+    executions: crowetrade.executions
+    risk_alerts: crowetrade.risk.alerts
+  consumer_group: crowetrade-production
+  
+# Risk Management
+risk:
+  max_leverage: 3.0
+  var_limit: 0.02           # 2% VaR
+  drawdown_limit: 0.05      # 5% max drawdown
+  position_limits:
+    single_asset: 0.1       # 10% max per asset
+    sector: 0.3             # 30% max per sector
+  stress_test_enabled: true
+  
+  # Crypto-specific risk controls
+  crypto:
+    enabled: true
+    max_crypto_portfolio_pct: 30    # 30% max crypto exposure
+    max_single_crypto_pct: 10       # 10% max single crypto
+    crypto_var_limit_1d: 5          # 5% daily VaR for crypto
+    max_drawdown_crypto: 15         # 15% max crypto drawdown
+    vol_target: 20                  # 20% target volatility
+    vol_lookback_days: 30
+    cold_storage_threshold: 10000   # USD threshold for cold storage
+    max_hot_wallet_balance: 50000   # USD max in hot wallets
+    require_2fa: true
+  
+# Strategy Configuration
+strategies:
+  default_config:
+    risk_aversion: 2.0
+    max_position_weight: 0.1
+    rebalance_frequency: daily
+    transaction_cost_bps: 5
+    
+  momentum:
+    enabled: true
+    lookback_days: 20
+    min_momentum_threshold: 0.02
+    
+  mean_reversion:
+    enabled: true
+    lookback_days: 5
+    reversion_threshold: 2.0
+    
+# Market Data Configuration
+market_data:
+  primary_feed: ${PRIMARY_FEED_URL}
+  backup_feed: ${BACKUP_FEED_URL}
+  symbols:
+    - SPY
+    - QQQ  
+    - IWM
+    - TLT
+    - GLD
+  update_frequency: 1  # seconds
+  
+# Execution Configuration
+execution:
+  venues:
+    - name: interactive_brokers
+      enabled: true
+      account: ${IB_ACCOUNT}
+      api_key: ${IB_API_KEY}
+      max_order_size: 100000
+      
+    - name: alpaca
+      enabled: true
+      api_key: ${ALPACA_API_KEY}
+      secret_key: ${ALPACA_SECRET_KEY}
+      paper_trading: false
+      
+    - name: coinbase_pro
+      enabled: true
+      type: crypto_exchange
+      api_key: ${COINBASE_API_KEY}
+      api_secret: ${COINBASE_API_SECRET}
+      passphrase: ${COINBASE_PASSPHRASE}
+      sandbox: false
+      max_order_size_usd: 1000000
+      supported_assets:
+        - BTC-USD
+        - ETH-USD
+        - ADA-USD
+        - SOL-USD
+        - MATIC-USD
+        - USDC-USD
+      
+# Monitoring and Observability
+monitoring:
+  prometheus:
+    enabled: true
+    port: 9090
+    scrape_interval: 15
+    
+  grafana:
+    enabled: true
+    port: 3000
+    dashboards_enabled: true
+    
+  alerts:
+    slack_webhook: ${SLACK_WEBHOOK_URL}
+    email_notifications: ${ALERT_EMAIL}
+    
+  metrics:
+    - name: model_performance
+      type: histogram
+      buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]
+      
+    - name: trade_execution_latency
+      type: histogram
+      buckets: [0.001, 0.01, 0.1, 1.0, 10.0]
+      
+    - name: risk_metrics
+      type: gauge
+      labels: [strategy, asset]
+      
+# Security Configuration
+security:
+  api_keys:
+    rotation_interval: 2592000  # 30 days
+    encryption_enabled: true
+    
+  rate_limiting:
+    requests_per_minute: 1000
+    burst_capacity: 100
+    
+  audit:
+    enabled: true
+    log_all_trades: true
+    retention_days: 2555  # 7 years
+    
+# Performance Optimization
+performance:
+  caching:
+    enabled: true
+    ttl: 300  # 5 minutes
+    max_size: 10000
+    
+  async_processing:
+    enabled: true
+    max_workers: 10
+    queue_size: 1000
+    
+  data_compression:
+    enabled: true
+    algorithm: gzip
+    level: 6
+    
+# Backup and Disaster Recovery
+backup:
+  enabled: true
+  frequency: daily
+  retention_days: 90
+  s3_bucket: ${BACKUP_S3_BUCKET}
+  encryption_enabled: true
+  
+disaster_recovery:
+  enabled: true
+  backup_region: us-east-1
+  rto_minutes: 30  # Recovery Time Objective
+  rpo_minutes: 5   # Recovery Point Objective
