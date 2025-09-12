@@ -1,0 +1,56 @@
+# CroweTrade Frontend Service
+app = "crowetrade-web"
+primary_region = "iad"
+
+[build]
+  dockerfile = "frontend/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  NEXT_PUBLIC_API_URL = "https://api.crowetrade.com"
+  NEXT_PUBLIC_WS_URL = "wss://api.crowetrade.com/ws"
+  NEXT_PUBLIC_NETWORK = "mainnet"
+
+# HTTP Service Configuration
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 1000
+    soft_limit = 800
+
+# Health checks
+[[services]]
+  http_checks = []
+  internal_port = 3000
+  processes = ["app"]
+  protocol = "tcp"
+  script_checks = []
+
+  [services.concurrency]
+    hard_limit = 25
+    soft_limit = 20
+    type = "connections"
+
+  [[services.ports]]
+    force_https = true
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.http_checks]]
+    grace_period = "5s"
+    interval = "30s"
+    method = "get"
+    path = "/"
+    protocol = "http"
+    restart_limit = 0
+    timeout = "5s"
