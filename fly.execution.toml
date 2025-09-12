@@ -11,6 +11,7 @@ primary_region = "iad"
   RUN_MODE = "production"
   PAPER_MODE = "true"
   LOG_LEVEL = "info"
+  CORS_ORIGINS = "https://crowetrade.com,https://www.crowetrade.com"
 
 [[services]]
   internal_port = 8080
