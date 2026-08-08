@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "crowetrade-engine",
+  "main": "src/index.ts",
+  "account_id": "9f3b1ed688d960bc9ea03569ca840dfd",
+  "compatibility_date": "2026-08-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "triggers": { "crons": ["* * * * *"] },
+  "assets": { "directory": "./public" },
+  "durable_objects": {
+    "bindings": [{ "name": "LEDGER", "class_name": "Ledger" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Ledger"] }]
+}

@@ -1,0 +1,41 @@
+{
+  "name": "crowetrade-terminal",
+  "productName": "CroweTrade",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CroweTrade operator terminal",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k -n vite,electron -c gray,yellow \"vite\" \"npm:dev:electron\"",
+    "dev:electron": "wait-on tcp:5273 && tsc -p electron/tsconfig.json && electron .",
+    "build": "tsc -p electron/tsconfig.json && vite build",
+    "build:mac": "npm run build && electron-builder --mac",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p electron/tsconfig.json",
+    "test": "node --test --experimental-strip-types 'src/**/*.test.ts'"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "wait-on": "^8.0.1"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "build": {
+    "appId": "com.crowelogic.crowetrade",
+    "productName": "CroweTrade",
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "dist-electron/**/*"],
+    "mac": {
+      "category": "public.app-category.finance",
+      "target": ["dmg", "zip"]
+    }
+  }
+}

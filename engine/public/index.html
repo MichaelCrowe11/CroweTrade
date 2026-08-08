@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CroweTrade</title>
+<meta name="description" content="Autonomous Solana trading under signed policy envelopes. A Crowe Logic system.">
+<style>
+/* Crowe Logic ladder, ported by name from the canonical desktop tokens.
+   Marketing surface: light monograph, dark instrument panels framed inside. */
+@font-face { font-family: "Fraunces"; src: url("/fonts/fraunces-var.woff2") format("woff2-variations"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Inter"; src: url("/fonts/inter-var.woff2") format("woff2-variations"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("/fonts/jetbrains-mono-var.woff2") format("woff2-variations"); font-weight: 100 800; font-display: swap; }
+
+:root {
+  --clm-cream: #f6f6f8; --clm-panel: #fafafc; --clm-raised: #ffffff;
+  --clm-ink: #17171a; --clm-muted: #63636c;
+  --clm-gold: #b8893a; --clm-gold-deep: #8c682c; --clm-gold-soft: #c9a227;
+  --clm-blue: #2e5aad;
+  --clm-line: rgba(23,23,26,0.11); --clm-line-strong: rgba(23,23,26,0.22);
+  --clm-gold-text: var(--clm-gold-deep);
+  --radius: 0.125rem;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --clm-cream: #0a0a0b; --clm-panel: #141416; --clm-raised: #1c1c1f;
+    --clm-ink: #e9e9ec; --clm-muted: #9a9aa2;
+    --clm-gold: #d2ad62; --clm-gold-deep: #9a7e44; --clm-gold-soft: #e7c984;
+    --clm-blue: #6b9be0;
+    --clm-line: rgba(255,255,255,0.08); --clm-line-strong: rgba(255,255,255,0.16);
+    --clm-gold-text: var(--clm-gold);
+  }
+}
+
+* { box-sizing: border-box; margin: 0; }
+body {
+  background: var(--clm-cream); color: var(--clm-ink);
+  font-family: "Inter", -apple-system, sans-serif;
+  font-size: 16px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+
+header.site {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 28px 0; border-bottom: 1px solid var(--clm-line);
+}
+.wordmark { font-family: "Fraunces", serif; font-size: 20px; font-weight: 600; }
+.wordmark b { color: var(--clm-gold-text); font-weight: 600; }
+.site-tag { font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .22em; text-transform: uppercase; color: var(--clm-muted); }
+
+.hero { padding: 84px 0 56px; }
+.eyebrow {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 5px 14px; border: 1px solid rgba(184,137,58,.3); border-radius: 999px;
+  font-family: "JetBrains Mono", monospace; font-size: 10px;
+  letter-spacing: .22em; text-transform: uppercase; color: var(--clm-gold-text);
+}
+.eyebrow::before {
+  content: ""; width: 5px; height: 5px; border-radius: 999px;
+  background: var(--clm-gold); animation: pulse 2.4s var(--ease) infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+@media (prefers-reduced-motion: reduce) { .eyebrow::before { animation: none } }
+
+h1 {
+  font-family: "Fraunces", serif; font-size: clamp(38px, 6vw, 64px);
+  font-weight: 560; line-height: 1.06; letter-spacing: -0.015em;
+  margin: 26px 0 20px; max-width: 17ch;
+}
+.lede { font-size: 19px; color: var(--clm-muted); max-width: 56ch; }
+.lede strong { color: var(--clm-ink); font-weight: 550; }
+
+.shot {
+  margin: 64px 0; border: 1px solid var(--clm-line-strong); border-radius: var(--radius);
+  overflow: hidden; box-shadow: 0 24px 64px rgba(10,10,11,.18);
+  background: #0a0a0b;
+}
+.shot img { display: block; width: 100%; height: auto; }
+.shot figcaption {
+  padding: 12px 18px; border-top: 1px solid rgba(255,255,255,.08);
+  font-family: "JetBrains Mono", monospace; font-size: 10px;
+  letter-spacing: .18em; text-transform: uppercase; color: #9a9aa2;
+}
+
+.pillars { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1px; background: var(--clm-line); border: 1px solid var(--clm-line); border-radius: var(--radius); overflow: hidden; margin: 24px 0 72px; }
+.pillar { background: var(--clm-panel); padding: 30px 28px; }
+.pillar h2 { font-family: "JetBrains Mono", monospace; font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--clm-gold-text); margin-bottom: 12px; }
+.pillar p { font-size: 14.5px; color: var(--clm-muted); }
+.pillar p strong { color: var(--clm-ink); font-weight: 550; }
+
+.record { border: 1px solid var(--clm-line-strong); border-left: 3px solid var(--clm-gold); border-radius: var(--radius); background: var(--clm-panel); padding: 30px 32px; margin-bottom: 72px; }
+.record h2 { font-family: "Fraunces", serif; font-size: 24px; font-weight: 560; margin-bottom: 8px; }
+.record p { color: var(--clm-muted); font-size: 15px; max-width: 62ch; }
+.record .stats { display: flex; gap: 40px; margin-top: 22px; flex-wrap: wrap; }
+.stat { display: flex; flex-direction: column; gap: 4px; }
+.stat .k { font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--clm-muted); }
+.stat .v { font-family: "JetBrains Mono", monospace; font-size: 24px; font-weight: 600; color: var(--clm-ink); font-variant-numeric: tabular-nums; }
+.record a { color: var(--clm-blue); text-decoration: none; font-size: 14px; }
+.record a:hover { text-decoration: underline; }
+
+footer.site {
+  padding: 36px 0 56px; border-top: 1px solid var(--clm-line);
+  display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap;
+  font-size: 13px; color: var(--clm-muted);
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="site">
+    <span class="wordmark">Crowe<b>Trade</b></span>
+    <span class="site-tag">A Crowe Logic System</span>
+  </header>
+
+  <section class="hero">
+    <span class="eyebrow">Validation phase, live</span>
+    <h1>Autonomous trading, under a policy you signed.</h1>
+    <p class="lede">
+      CroweTrade trades Solana's fastest markets at machine speed, inside limits
+      its operator consented to cryptographically. <strong>One signed envelope</strong>
+      carries the risk waiver, the hard caps, and the expiry. Every fill records
+      the hash of the policy that authorized it. Tighten instantly, loosen with
+      delay, veto a fresh entry, or kill it all with one action.
+    </p>
+  </section>
+
+  <figure class="shot">
+    <img src="/terminal.png" alt="The CroweTrade operator terminal: price chart, survivability gates, and verdict for a token minutes after launch." width="2560" height="1540">
+    <figcaption>Operator terminal, live feed</figcaption>
+  </figure>
+
+  <div class="pillars">
+    <div class="pillar">
+      <h2>Survivability gates</h2>
+      <p>Mint authority, freeze authority, liquidity lock, holder spread,
+      deployer history: verified <strong>from chain state directly</strong>, never from an
+      aggregator's opinion. A failed critical gate vetoes any trade, no matter
+      how strong the signal.</p>
+    </div>
+    <div class="pillar">
+      <h2>Signed policy envelopes</h2>
+      <p>The waiver text, the caps, and the expiry live in <strong>one object your
+      wallet signs</strong>. The signature is both the consent record and the
+      credential the signer checks before every transaction. Nothing executes
+      outside a live envelope.</p>
+    </div>
+    <div class="pillar">
+      <h2>Provable lineage</h2>
+      <p>Every fill carries its policy hash. Any trade can be traced to the
+      exact limits and consent that authorized it, which makes the record
+      <strong>auditable end to end</strong>, simulated and live alike.</p>
+    </div>
+  </div>
+
+  <section class="record">
+    <h2>The validation record</h2>
+    <p>The engine is trading simulated capital under full envelope discipline,
+    around the clock, with modeled slippage and pessimistic fills. The record
+    below updates live and will carry into small live capital only when it has
+    earned it.</p>
+    <div class="stats">
+      <span class="stat"><span class="k">Open</span><span class="v" id="s-open">--</span></span>
+      <span class="stat"><span class="k">Closed</span><span class="v" id="s-closed">--</span></span>
+      <span class="stat"><span class="k">Win rate</span><span class="v" id="s-win">--</span></span>
+      <span class="stat"><span class="k">Simulated PnL</span><span class="v" id="s-pnl">--</span></span>
+    </div>
+    <p style="margin-top:18px"><a href="/api/positions">Read the raw ledger</a></p>
+  </section>
+
+  <footer class="site">
+    <span>Crowe Logic, Inc.</span>
+    <span>Simulated results are simulations. Nothing here is investment advice.</span>
+  </footer>
+</div>
+
+<script>
+fetch("/api/positions").then(r => r.json()).then(d => {
+  const set = (id, v) => { document.getElementById(id).textContent = v }
+  set("s-open", d.open.length)
+  set("s-closed", d.stats.closedCount)
+  set("s-win", d.stats.winRate === null ? "--" : Math.round(d.stats.winRate * 100) + "%")
+  const pnl = d.stats.totalPnlUsd
+  set("s-pnl", (pnl >= 0 ? "+$" : "-$") + Math.abs(pnl).toFixed(2))
+}).catch(() => {})
+</script>
+</body>
+</html>

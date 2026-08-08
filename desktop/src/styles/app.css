@@ -1,0 +1,520 @@
+/* CroweTrade operator terminal.
+ *
+ * Design north star from the Crowe spec: surfaces should feel like INSTRUMENTS,
+ * not dashboards. Aviation and scope precision, not data soup. One primary
+ * readout, supporting readouts around it, and enough negative space that the
+ * primary can breathe. Every competitor in this market ships a dense scrolling
+ * table; the whole point here is to not do that.
+ */
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--clm-cream);
+  color: var(--clm-ink);
+  font-family: var(--clm-font-body);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  /* The chrome is ours; nothing in the shell should look text-selectable. */
+  user-select: none;
+}
+
+/* Numerics are tabular everywhere. Digits that shift width as a price ticks
+ * make the eye chase the number instead of reading it, which is exactly the
+ * failure mode an instrument exists to prevent. */
+.mono {
+  font-family: var(--clm-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100%;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 20px 14px 88px; /* left inset clears the traffic lights */
+  border-bottom: 1px solid var(--clm-line);
+  -webkit-app-region: drag;
+}
+
+.header__brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.header__wordmark {
+  font-family: var(--clm-font-display);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.header__wordmark-accent { color: var(--clm-gold); }
+
+/* ── Market pulse strip ─────────────────────────────────────────────────── */
+
+.pulse {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--clm-ink);
+}
+
+.pulse__item { display: flex; align-items: baseline; gap: 7px; }
+
+.pulse__key {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--clm-muted);
+}
+
+.pulse__sep {
+  width: 1px;
+  height: 14px;
+  background: var(--clm-line-strong);
+}
+
+.header__product {
+  font-family: var(--clm-font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--clm-muted);
+}
+
+/* The eyebrow pill is the signature Crowe component and the one place a pill
+ * radius is allowed. Used exactly once in this app, on feed status, because
+ * overuse dilutes the signature. */
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border: 1px solid rgba(210, 173, 98, 0.3);
+  border-radius: 999px;
+  font-family: var(--clm-font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--clm-gold);
+  -webkit-app-region: no-drag;
+}
+
+.eyebrow__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--clm-gold);
+  animation: pulse 2.4s var(--clm-ease) infinite;
+}
+
+.eyebrow--idle { border-color: var(--clm-line-strong); color: var(--clm-muted); }
+.eyebrow--idle .eyebrow__dot { background: var(--clm-muted); animation: none; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eyebrow__dot { animation: none; }
+}
+
+/* ── Body grid: scan | primary | support ────────────────────────────────── */
+
+.body {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr) 300px;
+  min-height: 0;
+}
+
+.pane { min-height: 0; overflow-y: auto; }
+.pane--scan { border-right: 1px solid var(--clm-line); }
+.pane--support { border-left: 1px solid var(--clm-line); }
+
+.pane__title {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 14px 16px 10px;
+  background: var(--clm-cream);
+  border-bottom: 1px solid var(--clm-line);
+  font-family: var(--clm-font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--clm-muted);
+}
+
+/* ── Scan list ──────────────────────────────────────────────────────────── */
+
+.scan__row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  grid-template-rows: auto auto;
+  gap: 4px 10px;
+  align-items: center;
+  width: 100%;
+  padding: 11px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--clm-line);
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms var(--clm-ease);
+}
+
+.scan__row:hover { background: var(--clm-panel); }
+.scan__row:focus-visible { outline: 2px solid var(--clm-gold); outline-offset: -2px; }
+
+.scan__row[aria-selected="true"] {
+  background: var(--clm-panel);
+  border-left-color: var(--clm-gold);
+}
+
+.scan__symbol { grid-column: 1; grid-row: 1; font-weight: 550; letter-spacing: 0.01em; }
+.scan__age { grid-column: 1 / span 2; grid-row: 2; font-size: 11px; color: var(--clm-muted); }
+
+.scan__change {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: 11px;
+  align-self: center;
+}
+
+/* Direction color: soft gold up, quiet red down. The down-red is dimmer than
+ * the lamp fail red on purpose; a drawdown is information, an unsafe token is
+ * an alarm, and they must not read at the same volume. */
+.scan__change--up { color: var(--clm-gold-soft); }
+.scan__change--down { color: rgba(212, 87, 78, 0.78); }
+
+.scan__flag {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+}
+
+.scan__flag--clear { background: var(--clm-lamp-pass); }
+.scan__flag--caution { background: var(--clm-gold-deep); }
+.scan__flag--blocked { background: var(--clm-lamp-fail); }
+.scan__flag--insufficient-data { background: var(--clm-lamp-unknown); }
+
+/* ── Primary readout ────────────────────────────────────────────────────── */
+
+.primary {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 40px 44px;
+}
+
+.primary__identity { display: flex; flex-direction: column; gap: 6px; }
+
+.primary__titlerow { display: flex; align-items: baseline; gap: 14px; }
+
+.primary__venue {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--clm-muted);
+  border: 1px solid var(--clm-line-strong);
+  border-radius: var(--clm-radius);
+  padding: 3px 8px;
+}
+
+.primary__symbol {
+  font-family: var(--clm-font-display);
+  font-size: 40px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+.primary__name { color: var(--clm-muted); font-size: 14px; }
+
+.primary__mint {
+  font-size: 11px;
+  color: var(--clm-muted);
+  user-select: text;
+}
+
+/* ── Price chart ────────────────────────────────────────────────────────── */
+
+.chart {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 20px 12px;
+  border: 1px solid var(--clm-line);
+  border-radius: var(--clm-radius);
+  background: var(--clm-panel);
+  box-shadow: var(--clm-z1);
+}
+
+.chart--empty {
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+}
+
+.chart__status {
+  font-family: var(--clm-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--clm-muted);
+}
+
+.chart__head { display: flex; align-items: baseline; gap: 16px; }
+
+.chart__price { font-size: 22px; font-weight: 600; color: var(--clm-ink); }
+
+.chart__change { font-size: 12px; }
+.chart__change--up { color: var(--clm-gold-soft); }
+.chart__change--down { color: rgba(212, 87, 78, 0.85); }
+
+.chart__svg { width: 100%; height: 240px; display: block; }
+
+.chart__grid { stroke: var(--clm-line); stroke-width: 1; }
+
+.chart__axis {
+  font-family: var(--clm-font-mono);
+  font-size: 10px;
+  fill: var(--clm-muted);
+}
+
+.chart__vol { fill: var(--clm-gold); opacity: 0.14; }
+
+.chart__line {
+  fill: none;
+  stroke: var(--clm-gold);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+
+.chart__last {
+  stroke: var(--clm-gold-deep);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: 0.7;
+}
+
+.chart__tip { fill: var(--clm-gold-soft); }
+
+/* The verdict is the single dominant element on the surface. It is deliberately
+ * a word rather than a number: a score of 62 invites the eye to negotiate with
+ * it, and the whole purpose of this readout is to not be negotiated with. */
+.verdict {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 22px 24px;
+  border: 1px solid var(--clm-line-strong);
+  border-left-width: 3px;
+  border-radius: var(--clm-radius);
+  background: var(--clm-panel);
+  box-shadow: var(--clm-z1);
+}
+
+.verdict__word {
+  font-family: var(--clm-font-mono);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.verdict__note { color: var(--clm-muted); font-size: 12px; }
+
+.verdict--clear { border-left-color: var(--clm-lamp-pass); }
+.verdict--clear .verdict__word { color: var(--clm-lamp-pass); }
+.verdict--caution { border-left-color: var(--clm-gold-deep); }
+.verdict--caution .verdict__word { color: var(--clm-gold-deep); }
+.verdict--blocked { border-left-color: var(--clm-lamp-fail); }
+.verdict--blocked .verdict__word { color: var(--clm-lamp-fail); }
+.verdict--insufficient-data { border-left-color: var(--clm-line-strong); }
+.verdict--insufficient-data .verdict__word { color: var(--clm-muted); }
+.verdict--unset { border-left-color: var(--clm-blue); }
+.verdict--unset .verdict__word { font-size: 18px; color: var(--clm-blue); }
+
+/* ── Annunciator panel ──────────────────────────────────────────────────── */
+
+.annunciator {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 1px;
+  border: 1px solid var(--clm-line);
+  border-radius: var(--clm-radius);
+  background: var(--clm-line);
+  overflow: hidden;
+}
+
+.lamp {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 11px;
+  align-items: center;
+  padding: 15px 16px;
+  background: var(--clm-panel);
+}
+
+.lamp__led {
+  grid-row: 1 / span 2;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--clm-lamp-unknown);
+}
+
+/* Only a lit lamp glows, and only faintly. A panel where everything glows is
+ * decoration; a panel where one thing glows is information. */
+.lamp--pass .lamp__led {
+  background: var(--clm-lamp-pass);
+  box-shadow: 0 0 0 3px var(--clm-focus-halo);
+}
+
+.lamp--fail .lamp__led {
+  background: var(--clm-lamp-fail);
+  box-shadow: 0 0 0 3px rgba(212, 87, 78, 0.22);
+}
+
+.lamp__label {
+  font-family: var(--clm-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--clm-muted);
+}
+
+.lamp--pass .lamp__label { color: var(--clm-ink); }
+.lamp--fail .lamp__label { color: var(--clm-lamp-fail); }
+
+.lamp__detail { font-size: 11px; color: var(--clm-muted); }
+
+/* A critical gate that failed gets a hairline top edge in the fail hue. The
+ * severity distinction has to be visible without reading, because the two
+ * failure classes mean different things: elevated costs you some, critical
+ * costs you everything. */
+.lamp--fail.lamp--critical { border-top: 1px solid var(--clm-lamp-fail); }
+
+/* ── Support pane ───────────────────────────────────────────────────────── */
+
+.stat {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--clm-line);
+}
+
+.stat__key {
+  font-family: var(--clm-font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--clm-muted);
+}
+
+.stat__value { font-size: 13px; }
+.stat__value--muted { color: var(--clm-muted); }
+
+.pane__title--section { border-top: 1px solid var(--clm-line); margin-top: 8px; }
+
+.stat--tall { flex-direction: column; align-items: stretch; gap: 8px; }
+
+/* ── Buy/sell pressure ──────────────────────────────────────────────────── */
+
+.pressure { display: flex; flex-direction: column; gap: 6px; }
+
+.pressure__track {
+  height: 6px;
+  border-radius: var(--clm-radius);
+  background: rgba(212, 87, 78, 0.32); /* sells: the remainder */
+  overflow: hidden;
+}
+
+.pressure__buys { height: 100%; background: var(--clm-gold); }
+
+.pressure__caption { font-size: 10px; color: var(--clm-muted); }
+
+/* ── Execution module ───────────────────────────────────────────────────── */
+
+.exec { padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+
+.exec__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.exec__key {
+  font-family: var(--clm-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--clm-muted);
+}
+
+.exec__value {
+  font-family: var(--clm-font-mono);
+  font-size: 12px;
+  color: var(--clm-ink);
+}
+
+.exec__value--observe {
+  color: var(--clm-blue);
+  letter-spacing: 0.14em;
+}
+
+.exec__note {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--clm-muted);
+}
+
+.empty {
+  padding: 48px 24px;
+  color: var(--clm-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.notice {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(107, 155, 224, 0.32);
+  border-radius: var(--clm-radius);
+  background: rgba(107, 155, 224, 0.07);
+  font-size: 12px;
+  color: var(--clm-ink);
+}
+
+.notice code {
+  font-family: var(--clm-font-mono);
+  font-size: 11px;
+  color: var(--clm-blue);
+}

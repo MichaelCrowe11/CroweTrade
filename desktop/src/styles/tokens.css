@@ -1,0 +1,73 @@
+/* Crowe Logic token ladder, dark product surface.
+ *
+ * Ported by NAME from the canonical set served at crowelm.com/static/custom.css,
+ * whose own source of truth is the Crowe Logic Desktop renderer. Values are
+ * mirrored here because Electron loads over file:// and cannot link a remote
+ * stylesheet, but the names are identical on purpose: when the desktop tokens
+ * move, this is a find-and-replace, not a re-derivation.
+ *
+ * This is a PRODUCT surface, so it is dark gold-on-graphite. The light monograph
+ * treatment is for marketing surfaces only.
+ */
+
+/* The three canonical variable faces, copied from the Crowe Logic Desktop
+ * renderer's own assets/fonts. Self-hosted deliberately: a trading surface
+ * should not reach a third-party font CDN, and there is no layout shift waiting
+ * on one. `base: "./"` in the vite config keeps these resolving over file://. */
+@font-face {
+  font-family: "Fraunces";
+  src: url("../../public/fonts/fraunces-var.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("../../public/fonts/inter-var.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../../public/fonts/jetbrains-mono-var.woff2") format("woff2-variations");
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+:root {
+  --clm-cream: #0a0a0b;
+  --clm-panel: #141416;
+  --clm-raised: #1c1c1f;
+  --clm-ink: #e9e9ec;
+  --clm-muted: #9a9aa2;
+
+  --clm-gold: #d2ad62;
+  --clm-gold-soft: #e7c984;
+  --clm-gold-deep: #9a7e44;
+  --clm-blue: #6b9be0;
+
+  --clm-line: rgba(255, 255, 255, 0.08);
+  --clm-line-strong: rgba(255, 255, 255, 0.16);
+  --clm-hair-top: rgba(255, 255, 255, 0.13);
+
+  --clm-z1: 0 1px 2px rgba(3, 3, 5, 0.42);
+  --clm-z2: 0 4px 12px rgba(3, 3, 5, 0.48), inset 0 1px 0 var(--clm-hair-top);
+
+  --clm-accent-wash: rgba(210, 173, 98, 0.14);
+  --clm-focus-halo: rgba(210, 173, 98, 0.22);
+
+  /* Square, per the design spec. Pill is reserved for the eyebrow only. */
+  --clm-radius: 0.125rem;
+  --clm-ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Annunciator states. Red is the ONLY non-brand hue in the app and it earns
+   * its place: a failed critical gate is the one thing that must never be
+   * mistaken for anything else. Gold cannot carry that meaning, because gold is
+   * already the brand's approving colour. */
+  --clm-lamp-pass: var(--clm-gold);
+  --clm-lamp-fail: #d4574e;
+  --clm-lamp-unknown: rgba(154, 154, 162, 0.28);
+
+  --clm-font-display: "Fraunces", ui-serif, Georgia, serif;
+  --clm-font-body: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --clm-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
