@@ -93,7 +93,9 @@ export function decideEntries(
     if (c.changeH1 === null || c.changeH1 > policy.entry.maxChangeH1Pct) continue
 
     // Paid promotion is a distribution event by definition.
-    if (policy.entry.excludeBoosted && c.origin === "boost") continue
+    // "both" is a boosted listing that ALSO has a profile; excluding only
+    // "boost" let paid promotion in through the side entrance.
+    if (policy.entry.excludeBoosted && (c.origin === "boost" || c.origin === "both")) continue
 
     // Our own tape must agree before a listing gets our capital.
     if (!trajectoryConfirms(trajectories.get(c.mint), policy.entry.minObservedTicks)) continue

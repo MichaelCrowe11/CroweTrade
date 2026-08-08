@@ -1,11 +1,14 @@
 /**
  * The Ledger: one Durable Object holding the whole paper-trading state.
  *
- * The entire tick runs INSIDE the DO rather than in the cron handler, because
- * a Durable Object is single-threaded by contract: two overlapping ticks (a
- * slow minute meeting the next cron) serialize instead of double-entering the
- * same token. Concurrency safety by construction beats concurrency safety by
- * discipline.
+ * The entire tick runs INSIDE the DO so all state mutation happens in one
+ * place. An earlier version of this comment claimed a Durable Object is
+ * "single-threaded by contract" and therefore serializes overlapping ticks.
+ * That is FALSE and was a dangerous thing to believe: a DO's input gate does
+ * not hold across `await`ed external I/O, and this tick awaits dozens of
+ * fetches. A cron tick and a manual tick genuinely can interleave, both read
+ * the same open positions and budget, and both enter. Serialization is
+ * enforced explicitly by the tick lease below, not assumed.
  *
  * Every fill is stamped with the policy hash that authorized it. That lineage
  * is the audit trail: this fill, under this policy version. The positions and
@@ -131,6 +134,14 @@ export class Ledger extends DurableObject<Env> {
       } catch {
         // Column already present; nothing to migrate.
       }
+      // Entry and exit pricing are tracked separately: a position can be
+      // entered on a real quote and exited with no route at all, and calling
+      // that whole round trip "venue-quoted" overstates the record's fidelity.
+      try {
+        sql.exec("ALTER TABLE positions ADD COLUMN exit_pricing TEXT")
+      } catch {
+        // Column already present.
+      }
       this.schemaReady = true
     }
     return sql
@@ -193,6 +204,7 @@ export class Ledger extends DurableObject<Env> {
     let proceeds: number
     let impact: number | null = null
     let route: string | null = null
+    let pricing = "quote"
 
     const q = baseUnits > 0n ? await quoteSell(p.mint, baseUnits, SLIPPAGE_BPS) : null
     if (q && solUsd > 0) {
@@ -200,11 +212,17 @@ export class Ledger extends DurableObject<Env> {
       impact = q.priceImpactPct
       route = q.route
     } else {
-      // No route: the position is effectively unexitable right now. Marking it
-      // at mark price would invent liquidity that does not exist, so it is
-      // marked to ZERO. That is the honest floor, and it is what a rug looks
-      // like from the inside.
-      proceeds = reason === "safety-exit" ? 0 : p.tokenAmount * exitPriceUsd * 0.5
+      // No sell route means no buyer at any size: the position is unexitable,
+      // which is a total loss, so proceeds are ZERO for every exit reason.
+      //
+      // The previous form marked non-safety exits to half the mark price and
+      // still filed them as venue-quoted. That invented liquidity that did not
+      // exist AND let a fabricated number into the headline record — the exact
+      // dishonesty this engine exists to avoid. Such rows are now tagged
+      // 'unroutable': they remain in the record because the loss is real, and
+      // they stay distinguishable because the price was never quoted.
+      proceeds = 0
+      pricing = "unroutable"
     }
 
     const pnlUsd = proceeds - p.sizeUsd
@@ -246,9 +264,10 @@ export class Ledger extends DurableObject<Env> {
       this.metaSet("breaker_consec", "0")
     }
     this.sql().exec(
-      `UPDATE positions SET closed_at = ?, exit_price = ?, exit_reason = ?, pnl_usd = ?, pnl_pct = ?
+      `UPDATE positions SET closed_at = ?, exit_price = ?, exit_reason = ?, pnl_usd = ?, pnl_pct = ?,
+              exit_pricing = ?
        WHERE id = ?`,
-      now, effective, reason, pnlUsd, pnlPct, p.id,
+      now, effective, reason, pnlUsd, pnlPct, pricing, p.id,
     )
     this.event("exit", { id: p.id, symbol: p.symbol, reason, pnlUsd, pnlPct, impact, route })
     capture(this.env, this.ctx, "paper_exit", {
@@ -266,6 +285,18 @@ export class Ledger extends DurableObject<Env> {
     const now = Date.now()
     const signal = new AbortController().signal
     const policy = PAPER_POLICY
+
+    // Tick lease. Held for the duration, expires so a crashed tick cannot
+    // wedge the engine forever. Without this, an overlapping tick double-spends
+    // the daily cap and can open two positions in the same mint.
+    const LEASE_MS = 3 * 60_000
+    const leaseUntil = Number(this.metaGet("tick_lease") ?? "0")
+    if (now < leaseUntil) {
+      this.event("tick_skipped", { reason: "lease held", until: leaseUntil })
+      return { entered: 0, exited: 0, scanned: 0 }
+    }
+    this.metaSet("tick_lease", String(now + LEASE_MS))
+
     // Point the shared RPC at Helius when the key is present. Without it the
     // holder call is rate-limited to uselessness and that gate stays blind.
     configureRpc(this.env.HELIUS_API_KEY)
@@ -293,10 +324,26 @@ export class Ledger extends DurableObject<Env> {
     const open = this.openPositions()
 
     // Price and re-judge held tokens: union of fresh candidates and holdings.
-    const held = open.filter((p) => !candidates.some((c) => c.mint === p.mint))
+    // Follow-up set: held positions AND every still-unlabeled decision.
+    //
+    // The second half is not optional bookkeeping, it is what makes the
+    // calibration experiment valid. Held tokens are re-priced every tick
+    // because we own them; refused tokens would otherwise stop being observed
+    // the moment promotional discovery delists them, go stale, and get labeled
+    // "died" by absence rather than by dying. That would kill the control
+    // group on a technicality and make entered-vs-refused look decisive while
+    // measuring nothing but which cohort we bothered to watch.
+    const pendingLabel = this.sql().exec<{ mint: string }>(
+      "SELECT mint FROM decisions WHERE labeled = 0",
+    ).toArray().map((r) => r.mint)
+
+    const inScan = new Set(candidates.map((c) => c.mint))
+    const followUp = [...new Set([...open.map((p) => p.mint), ...pendingLabel])]
+      .filter((m) => !inScan.has(m))
+
     let heldPairs: Candidate[] = []
-    if (held.length > 0 && solUsd > 0) {
-      heldPairs = await fetchPairsForMints(held.map((p) => p.mint), solUsd, signal)
+    if (followUp.length > 0 && solUsd > 0) {
+      heldPairs = await fetchPairsForMints(followUp, solUsd, signal)
         .catch(() => [] as Candidate[])
     }
     const everything = [...candidates, ...heldPairs]
@@ -361,7 +408,7 @@ export class Ledger extends DurableObject<Env> {
       const verdict = combineVerdict(evaluateGates(c.snapshot))
       const ageMin = c.createdAt === null ? null : (now - c.createdAt) / 60_000
       const skipReason =
-        c.origin === "boost" && policy.entry.excludeBoosted ? "boosted"
+        (c.origin === "boost" || c.origin === "both") && policy.entry.excludeBoosted ? "boosted"
         : ageMin === null || ageMin < policy.entry.minTokenAgeMinutes ? "too-new"
         : ageMin > policy.entry.maxTokenAgeMinutes ? "too-old"
         : c.liquidityUsd === null || c.liquidityUsd < policy.entry.minLiquidityUsd ? "thin"
@@ -390,6 +437,9 @@ export class Ledger extends DurableObject<Env> {
         "SELECT at, price, liquidity_usd FROM ticks WHERE mint = ? ORDER BY at DESC LIMIT 1", d.mint,
       ).toArray()[0]
       const last = latest ?? null
+      // Staleness now means "we followed it and the venue stopped pricing it",
+      // because follow-up covers both cohorts. A delisted-but-alive token
+      // still returns a pair quote; one that returns nothing has no market.
       const stale = last === null || now - last.at > 10 * 60_000
       const ret = d.price && d.price > 0 && last?.price
         ? ((last.price - d.price) / d.price) * 100
@@ -487,6 +537,7 @@ export class Ledger extends DurableObject<Env> {
     if (!killed && !breakerOpen) {
       const day = new Date(now).toISOString().slice(0, 10)
       const spentToday = Number(this.metaGet(`spend:${day}`) ?? "0")
+      let spentRunning = spentToday
 
       // Our own tape, per candidate: the last few minute-ticks recorded above,
       // oldest first, straight from what this engine itself observed.
@@ -572,7 +623,12 @@ export class Ledger extends DurableObject<Env> {
           entry_price_impact_pct: q.priceImpactPct, entry_route: q.route,
           sim_units_consumed: sim.unitsConsumed, priority_fee_lamports: sim.priorityFeeLamports,
         })
-        this.metaSet(`spend:${day}`, String(spentToday + e.sizeSol))
+        // Accumulate against a running total, not the pre-loop snapshot: the
+        // previous form wrote spentToday + thisSize on every iteration, so a
+        // tick that opened four positions recorded one position's spend and
+        // the daily cap silently under-counted by 4x.
+        spentRunning += e.sizeSol
+        this.metaSet(`spend:${day}`, String(spentRunning))
         entered += 1
       }
     }
@@ -580,6 +636,9 @@ export class Ledger extends DurableObject<Env> {
     capture(this.env, this.ctx, "engine_tick", {
       scanned: candidates.length, entered, exited, open: this.openPositions().length, killed,
     })
+    // Release the lease so the next cron minute runs immediately rather than
+    // waiting out the expiry.
+    this.metaSet("tick_lease", "0")
     return { entered, exited, scanned: candidates.length }
   }
 
@@ -600,6 +659,28 @@ export class Ledger extends DurableObject<Env> {
     const legacy = sql.exec<{ n: number }>(
       "SELECT COUNT(*) AS n FROM positions WHERE closed_at IS NOT NULL AND priced_by = 'model'",
     ).one()
+
+    // Per-policy cohorts. The lifetime aggregate mixes policy versions and is
+    // therefore NOT the funding number: the 100-close criterion requires one
+    // stable policy, and every policy change restarts that clock. Reporting
+    // only the aggregate let a losing v1 and a different v2 average into a
+    // single meaningless figure.
+    const currentHash = this.metaGet("policy_hash")
+    const cohorts = sql.exec<{ policy_hash: string; n: number; pnl: number | null; wins: number | null; unroutable: number | null }>(
+      `SELECT policy_hash, COUNT(*) AS n, SUM(pnl_usd) AS pnl,
+              SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END) AS wins,
+              SUM(CASE WHEN exit_pricing = 'unroutable' THEN 1 ELSE 0 END) AS unroutable
+       FROM positions
+       WHERE closed_at IS NOT NULL AND priced_by = 'quote'
+       GROUP BY policy_hash ORDER BY n DESC`,
+    ).toArray().map((r) => ({
+      policyHash: r.policy_hash.slice(0, 8),
+      current: r.policy_hash === currentHash,
+      closed: r.n,
+      pnlUsd: Number((r.pnl ?? 0).toFixed(2)),
+      winRate: r.n > 0 ? Number(((r.wins ?? 0) / r.n).toFixed(3)) : null,
+      unroutableExits: r.unroutable ?? 0,
+    }))
     // Why the engine is or is not trading, without needing a log dive. A
     // silent engine and a capped engine look identical from the outside, and
     // that ambiguity cost a debugging cycle.
@@ -647,6 +728,18 @@ export class Ledger extends DurableObject<Env> {
       calibration: {
         decisions: cal.decisions,
         labeled: cal.labeled ?? 0,
+        // Distinguishes "no labels yet because none are due" from "labeling is
+        // broken" — the same ambiguity that hid the simulate-403 for hours.
+        oldestUnlabeledAgeMin: (() => {
+          const r = sql.exec<{ at: number | null }>(
+            "SELECT MIN(at) AS at FROM decisions WHERE labeled = 0",
+          ).one().at
+          return r === null ? null : Math.round((Date.now() - r) / 60_000)
+        })(),
+        dueForLabel: sql.exec<{ n: number }>(
+          "SELECT COUNT(*) AS n FROM decisions WHERE labeled = 0 AND at <= ?",
+          Date.now() - 30 * 60_000,
+        ).one().n,
         deathRate: (cal.labeled ?? 0) > 0 ? (cal.died ?? 0) / (cal.labeled ?? 1) : null,
         avgForwardRetEnteredPct: cal.entered_ret,
         avgForwardRetEligibleSkippedPct: cal.skipped_ret,
@@ -656,7 +749,10 @@ export class Ledger extends DurableObject<Env> {
       // indistinguishable from a broken one.
       events: sql.exec("SELECT at, kind, data FROM events ORDER BY at DESC LIMIT 25").toArray(),
       open, closed,
+      /** Per-policy cohorts. The funding criterion reads THIS, not lifetime. */
+      cohorts,
       stats: {
+        /** LIFETIME across all policy versions. Not the funding number. */
         closedCount: totals.n,
         totalPnlUsd: totals.pnl ?? 0,
         winRate: totals.n > 0 ? (totals.wins ?? 0) / totals.n : null,
