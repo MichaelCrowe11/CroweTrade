@@ -666,6 +666,80 @@ export class Ledger extends DurableObject<Env> {
     }
   }
 
+  /**
+   * Counterfactual exit sweep over positions we actually took.
+   *
+   * For each closed real-quote position, replay OUR OWN recorded ticks between
+   * entry and exit and ask what a given (takeProfit, stopLoss) pair would have
+   * returned. This is not a backtest of entries — those are fixed, they really
+   * happened — it is a backtest of the EXIT rule against observed prices, which
+   * is the one counterfactual the tick history can answer honestly.
+   *
+   * Caveat carried in the output: replay assumes we could exit at the observed
+   * mark, whereas real exits pay impact. Treat these as upper bounds and rank
+   * rules against each other, never as achievable PnL.
+   */
+  exitSweep(): unknown {
+    const sql = this.sql()
+    const positions = sql.exec<{
+      mint: string; entry_price: number; size_usd: number
+      opened_at: number; closed_at: number; token_amount: number
+    }>(
+      `SELECT mint, entry_price, size_usd, opened_at, closed_at, token_amount
+       FROM positions WHERE closed_at IS NOT NULL AND priced_by = 'quote'`,
+    ).toArray()
+
+    const grid = [
+      { tp: 40, sl: 25 }, { tp: 40, sl: 35 },
+      { tp: 60, sl: 25 }, { tp: 60, sl: 35 },
+      { tp: 80, sl: 35 }, { tp: 120, sl: 35 },
+    ]
+
+    const results = grid.map((g) => {
+      let pnl = 0, wins = 0, counted = 0, tpHits = 0, slHits = 0, expiries = 0
+      for (const p of positions) {
+        const ticks = sql.exec<{ price: number | null }>(
+          "SELECT price FROM ticks WHERE mint = ? AND at >= ? AND at <= ? ORDER BY at ASC",
+          p.mint, p.opened_at, p.closed_at,
+        ).toArray()
+        if (ticks.length === 0 || p.entry_price <= 0) continue
+        counted += 1
+
+        const upper = p.entry_price * (1 + g.tp / 100)
+        const lower = p.entry_price * (1 - g.sl / 100)
+        let retPct: number | null = null
+        for (const t of ticks) {
+          const px = t.price
+          if (px === null) continue
+          // Stop checked first: within a one-minute bar we cannot see order,
+          // and assuming the favorable fill is how backtests lie.
+          if (px <= lower) { retPct = -g.sl; slHits += 1; break }
+          if (px >= upper) { retPct = g.tp; tpHits += 1; break }
+        }
+        if (retPct === null) {
+          const last = ticks[ticks.length - 1]?.price ?? p.entry_price
+          retPct = ((last - p.entry_price) / p.entry_price) * 100
+          expiries += 1
+        }
+        const trade = p.size_usd * (retPct / 100)
+        pnl += trade
+        if (trade > 0) wins += 1
+      }
+      return {
+        rule: `TP${g.tp}/SL${g.sl}`,
+        counted, tpHits, slHits, expiries,
+        pnlUsd: Number(pnl.toFixed(2)),
+        winRate: counted > 0 ? Number((wins / counted).toFixed(3)) : null,
+      }
+    })
+
+    return {
+      note: "Exit-rule counterfactual on real entries and our own observed ticks. Ignores exit impact, so these are upper bounds — rank rules against each other, do not read as achievable PnL.",
+      positions: positions.length,
+      results: results.sort((a, b) => b.pnlUsd - a.pnlUsd),
+    }
+  }
+
   setKill(on: boolean): void {
     this.metaSet("kill", on ? "1" : "0")
     this.event("kill", { on })

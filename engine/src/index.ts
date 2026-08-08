@@ -59,6 +59,9 @@ export default {
       if (url.pathname === "/api/positions" && req.method === "GET") {
         return json(await ledger(env).summary())
       }
+      if (url.pathname === "/api/exit-sweep" && req.method === "GET") {
+        return json(await ledger(env).exitSweep())
+      }
       if (url.pathname === "/api/kill" && req.method === "POST") {
         if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
         const body = (await req.json().catch(() => ({}))) as { on?: boolean }
