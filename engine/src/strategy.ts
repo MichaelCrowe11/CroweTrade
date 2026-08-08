@@ -81,6 +81,12 @@ export function decideEntries(
     if (c.createdAt === null) continue
     const ageMin = (now - c.createdAt) / 60_000
     if (ageMin > policy.entry.maxTokenAgeMinutes) continue
+    if (ageMin < policy.entry.minTokenAgeMinutes) continue
+
+    // Momentum-exhaustion filter. Unknown change is treated as disqualifying
+    // rather than neutral: we cannot tell a quiet token from a parabolic one,
+    // and the parabolic case is the one that has been losing money.
+    if (c.changeH1 === null || c.changeH1 > policy.entry.maxChangeH1Pct) continue
 
     const verdict = combineVerdict(evaluateGates(c.snapshot))
     if (VERDICT_RANK[verdict] < minRank) continue

@@ -38,7 +38,17 @@ export interface PolicyEnvelope {
     /** Minimum verdict allowed to open: "clear" only, or caution-and-better. */
     minVerdict: "clear" | "caution"
     maxTokenAgeMinutes: number
+    /** Skip the launch window, where price gaps far past any stop. */
+    minTokenAgeMinutes: number
     minLiquidityUsd: number
+    /**
+     * Refuse tokens already parabolic on the hour.
+     *
+     * Discovery surfaces tokens BECAUSE they are moving, so the naive strategy
+     * systematically buys spikes. Both of the first honestly-priced losses were
+     * entries into tokens already up triple digits, dead within three minutes.
+     */
+    maxChangeH1Pct: number
   }
 
   exit: {
@@ -74,12 +84,24 @@ export const PAPER_POLICY: PolicyEnvelope = {
   entry: {
     minVerdict: "caution",
     maxTokenAgeMinutes: 90,
+    minTokenAgeMinutes: 15,
     minLiquidityUsd: 3_000,
+    maxChangeH1Pct: 80,
   },
   exit: {
-    takeProfitPct: 60,
+    /**
+     * Take-profit widened from 60 to 120 on measured evidence.
+     *
+     * Stops do not hold on these assets: an observed -35% stop realized at
+     * -43.6% because price gapped straight through it. With an effective loss
+     * near 40% and a win rate near 35%, breakeven needs roughly 75%, so a 60%
+     * target was mathematically losing before costs. 120 restores the
+     * asymmetry a low win rate requires.
+     */
+    takeProfitPct: 120,
     stopLossPct: 35,
-    timeStopMinutes: 45,
+    /** These positions resolve in minutes; 45 was holding through the decay. */
+    timeStopMinutes: 30,
     vetoWindowMinutes: 10,
   },
   expiresAt: "2027-01-01T00:00:00Z",
