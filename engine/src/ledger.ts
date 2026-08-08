@@ -23,6 +23,7 @@ import { evaluateGates, combineVerdict, type Verdict } from "../../shared/gates.
 import { PAPER_POLICY, policyHash } from "../../shared/policy.js"
 import { decideEntries, decideExits, type OpenPosition } from "./strategy.js"
 import { quoteBuy, quoteSell, LAMPORTS_PER_SOL } from "./execution/jupiter.js"
+import { dryRunSwap } from "./execution/swap.js"
 import { capture } from "./posthog.js"
 
 /** Slippage tolerance requested on every quote, entry and exit. */
@@ -295,7 +296,24 @@ export class Ledger extends DurableObject<Env> {
           continue
         }
 
-        const sizeUsd = e.sizeSol * solUsd
+        // Build and simulate the real transaction before committing to the
+        // position. A route that quotes but does not execute is a trade we
+        // would have paid fees to fail at.
+        const sim = await dryRunSwap(q.raw)
+        if (!sim.ok) {
+          this.event("entry_skipped", {
+            symbol: c.symbol, mint: c.mint, reason: "simulation failed", error: sim.error,
+          })
+          capture(this.env, this.ctx, "entry_rejected", {
+            symbol: c.symbol, mint: c.mint, reason: "simulation_failed", error: sim.error,
+          })
+          continue
+        }
+
+        // Priority fee is a real cost of entering and must be charged to the
+        // position, or the record quietly understates what trading costs.
+        const feeSol = (sim.priorityFeeLamports ?? 0) / LAMPORTS_PER_SOL
+        const sizeUsd = (e.sizeSol + feeSol) * solUsd
         const tokenAmount = Number(q.outAmount) / 10 ** decimals
         if (tokenAmount <= 0) continue
         const entryPrice = sizeUsd / tokenAmount
@@ -315,6 +333,7 @@ export class Ledger extends DurableObject<Env> {
           verdict: e.verdict, liquidity_usd: c.liquidityUsd, token_age_minutes: c.createdAt ? (now - c.createdAt) / 60_000 : null,
           policy_hash: hash,
           entry_price_impact_pct: q.priceImpactPct, entry_route: q.route,
+          sim_units_consumed: sim.unitsConsumed, priority_fee_lamports: sim.priorityFeeLamports,
         })
         this.metaSet(`spend:${day}`, String(spentToday + e.sizeSol))
         entered += 1

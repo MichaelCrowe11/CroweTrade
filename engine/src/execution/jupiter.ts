@@ -24,6 +24,12 @@ export interface Quote {
   priceImpactPct: number
   /** Venue labels along the route, for the record. */
   route: string
+  /**
+   * The unmodified response body. Jupiter's swap endpoint requires the whole
+   * quote echoed back verbatim, so it is carried rather than reconstructed —
+   * a re-serialized quote is a different quote.
+   */
+  raw: unknown
 }
 
 interface JupResponse {
@@ -55,6 +61,7 @@ async function quote(
       route: (body.routePlan ?? [])
         .map((r) => r.swapInfo?.label ?? "?")
         .join(" > "),
+      raw: body,
     }
   } catch {
     // Network failure must not be mistaken for "no route": callers treat null
