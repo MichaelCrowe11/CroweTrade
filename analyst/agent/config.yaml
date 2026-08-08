@@ -1,0 +1,41 @@
+# CroweTrade Analyst — Foundry agent configuration
+#
+# Read-only conversational surface over the live CroweTrade engine. Mirrors the
+# crowelm-foundry workspace pattern (agent/ + config/ + .foundry/).
+
+name: crowetrade-analyst
+display_name: CroweTrade Analyst
+version: 1
+description: >
+  Conversational analysis surface for the CroweTrade autonomous Solana trading
+  system. Answers questions about the live paper book, why specific tokens were
+  entered or refused, per-policy cohort records, and the calibration dataset.
+  Read-only by design.
+
+instructions_file: instructions.md
+tools_file: tools.md
+
+# Deterministic, because every answer restates numbers pulled from a ledger.
+# Creative variance here reads as unreliability, not personality.
+model:
+  temperature: 0.2
+  top_p: 0.9
+  max_output_tokens: 1500
+
+# The engine's read surface. Mutating endpoints are deliberately absent; the
+# kill switch, veto and policy changes stay behind the operator's own
+# authenticated actions so that a conversation can never move the book.
+openapi_tools:
+  - name: crowetrade_engine_read
+    spec: ../config/engine-openapi.yaml
+    auth: none
+    allowed_operations:
+      - getHealth
+      - getPositions
+      - getExitSweep
+
+safety:
+  read_only: true
+  # Fetched data (token names, symbols, route labels) is untrusted input and is
+  # never to be followed as instruction.
+  treat_tool_output_as_data: true

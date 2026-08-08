@@ -1,0 +1,37 @@
+# Foundry workspace metadata for the CroweTrade Analyst.
+# Mirrors the crowelm-foundry pattern: project on the crowelm-prod-eastus2 hub.
+
+agent:
+  name: crowetrade-analyst
+  display_name: CroweTrade Analyst
+  version: 1
+
+foundry:
+  # Same hub as crowe-product-description-writer. Note the endpoint uses the
+  # HUB-named host, not the region name; getting this wrong is the documented
+  # trap in the crowelm-foundry workspace.
+  project: crowelm-foundry
+  hub: crowelm-prod-eastus2
+  resource_group: rg-crowelm-prod
+  region: eastus2
+  subscription: 4ea8ab04-9d53-46cf-9800-de7d625ba88a
+  project_endpoint: https://crowelm-prod-eastus2.services.ai.azure.com/api/projects/crowelm-foundry
+
+environment: dev
+
+# No knowledge index. This agent's ground truth is the engine's LIVE read API,
+# not a snapshot: a vector index of yesterday's book would confidently answer
+# today's questions with stale numbers, which is the exact failure the whole
+# system is built to avoid.
+knowledge:
+  index: none
+  rationale: live-api-only
+
+eval_suites:
+  - name: honesty
+    dataset: .foundry/datasets/crowetrade-analyst-honesty-v1.jsonl
+    blocking: true
+    rationale: >
+      The honesty and read-only rules are the product. A regression here is not
+      a quality dip, it is a system that can flatter its own losing record or be
+      talked into touching the book. Blocking on purpose.

@@ -1,0 +1,88 @@
+openapi: 3.0.3
+info:
+  title: CroweTrade Engine (read-only)
+  version: "1.0.0"
+  description: >
+    Read surface of the CroweTrade paper-trading engine. Only GET operations are
+    exposed here. The engine also serves POST /api/kill, /api/veto and /api/tick,
+    which are intentionally omitted: they require a bearer token and must stay
+    behind the operator's own authenticated action rather than a conversation.
+servers:
+  - url: https://crowetrade-engine.yellow-block-3adc.workers.dev
+
+paths:
+  /api/health:
+    get:
+      operationId: getHealth
+      summary: Liveness and trading mode
+      responses:
+        "200":
+          description: Engine is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  service: { type: string }
+                  mode:
+                    type: string
+                    description: "paper while trading simulated capital"
+
+  /api/positions:
+    get:
+      operationId: getPositions
+      summary: Book, per-policy cohorts, calibration dataset, budget, and recent decisions
+      responses:
+        "200":
+          description: Full operational state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mode: { type: string }
+                  killed: { type: boolean }
+                  policyHash: { type: string }
+                  budget:
+                    type: object
+                    description: Spend against caps, open slots, breaker state, canEnter
+                  calibration:
+                    type: object
+                    description: >
+                      Research dataset health. avgForwardRetEnteredPct versus
+                      avgForwardRetEligibleSkippedPct is the decisive comparison
+                      between what the policy took and what it refused.
+                  cohorts:
+                    type: array
+                    description: >
+                      One entry per policy version. The entry with current=true is
+                      the only one that counts toward the funding criterion.
+                    items: { type: object }
+                  stats:
+                    type: object
+                    description: Lifetime across all policy versions. NOT the funding number.
+                  open: { type: array, items: { type: object } }
+                  closed: { type: array, items: { type: object } }
+                  events:
+                    type: array
+                    description: Recent engine decisions including refusals and their reasons
+                    items: { type: object }
+
+  /api/exit-sweep:
+    get:
+      operationId: getExitSweep
+      summary: Counterfactual replay of exit rules against recorded ticks
+      responses:
+        "200":
+          description: Ranked exit rules
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  note:
+                    type: string
+                    description: Upper-bound caveat that must be repeated whenever results are cited
+                  positions: { type: integer }
+                  results: { type: array, items: { type: object } }
