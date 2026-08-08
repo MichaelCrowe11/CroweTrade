@@ -58,6 +58,9 @@ const VERDICT_RANK: Record<Verdict, number> = {
   blocked: 0,
 }
 
+export { trajectoryConfirms, type Trajectory } from "../../shared/trajectory.js"
+import { trajectoryConfirms, type Trajectory } from "../../shared/trajectory.js"
+
 export function decideEntries(
   candidates: Candidate[],
   open: OpenPosition[],
@@ -65,6 +68,7 @@ export function decideEntries(
   solUsd: number,
   policy: PolicyEnvelope,
   now: number,
+  trajectories: Map<string, Trajectory>,
 ): EntryDecision[] {
   const held = new Set(open.map((p) => p.mint))
   const minRank = VERDICT_RANK[policy.entry.minVerdict]
@@ -87,6 +91,12 @@ export function decideEntries(
     // rather than neutral: we cannot tell a quiet token from a parabolic one,
     // and the parabolic case is the one that has been losing money.
     if (c.changeH1 === null || c.changeH1 > policy.entry.maxChangeH1Pct) continue
+
+    // Paid promotion is a distribution event by definition.
+    if (policy.entry.excludeBoosted && c.origin === "boost") continue
+
+    // Our own tape must agree before a listing gets our capital.
+    if (!trajectoryConfirms(trajectories.get(c.mint), policy.entry.minObservedTicks)) continue
 
     const verdict = combineVerdict(evaluateGates(c.snapshot))
     if (VERDICT_RANK[verdict] < minRank) continue

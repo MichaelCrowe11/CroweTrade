@@ -49,6 +49,43 @@ export interface PolicyEnvelope {
      * entries into tokens already up triple digits, dead within three minutes.
      */
     maxChangeH1Pct: number
+    /**
+     * Cost hurdle: refuse entries whose buy-quote price impact exceeds this.
+     *
+     * Round trip costs roughly twice the one-way impact plus fees, and v1's
+     * autopsy showed 61% of entries stopping out on exactly the thin pools
+     * where impact ran 2-3% each way. A trade that starts 6% underwater on
+     * costs needs the token to move 6% just to see zero. (Idea salvaged from
+     * autonomous_trader's risk_agent: edge must clear summed costs, always.)
+     */
+    maxEntryImpactPct: number
+    /**
+     * Refuse paid-promotion listings outright.
+     *
+     * The boosts feed is advertising: someone paid to surface the token at
+     * this moment, which is precisely when they need buyers. Profile listings
+     * are promotional too, but boosts select hardest for distribution events.
+     */
+    excludeBoosted: boolean
+    /**
+     * Require this many of OUR OWN minute-ticks before entering, with price
+     * higher than at the start of the window and liquidity not draining.
+     * Confirmation from what we watched happen, not what a listing claims.
+     */
+    minObservedTicks: number
+  }
+
+  /**
+   * Circuit breaker: consecutive stop-loss exits trip a pause on new entries.
+   *
+   * v1 took 22 stop-outs with nothing watching the sequence. Whatever the
+   * entry logic is, a run of stops means the market regime and the strategy
+   * disagree right now, and the cheapest response is to stand down briefly.
+   * Exits keep managing regardless, as with the kill switch.
+   */
+  breaker: {
+    consecutiveStopLimit: number
+    cooldownMinutes: number
   }
 
   exit: {
@@ -95,6 +132,13 @@ export const PAPER_POLICY: PolicyEnvelope = {
     minTokenAgeMinutes: 15,
     minLiquidityUsd: 3_000,
     maxChangeH1Pct: 80,
+    maxEntryImpactPct: 1.5,
+    excludeBoosted: true,
+    minObservedTicks: 3,
+  },
+  breaker: {
+    consecutiveStopLimit: 4,
+    cooldownMinutes: 60,
   },
   exit: {
     /**

@@ -26,7 +26,12 @@ import {
 } from "../../shared/solana.js"
 import { evaluateGates, combineVerdict, type Verdict } from "../../shared/gates.js"
 import { PAPER_POLICY, policyHash } from "../../shared/policy.js"
-import { decideEntries, decideExits, type OpenPosition } from "./strategy.js"
+import {
+  decideEntries,
+  decideExits,
+  type OpenPosition,
+  type Trajectory,
+} from "./strategy.js"
 import { quoteBuy, quoteSell, LAMPORTS_PER_SOL } from "./execution/jupiter.js"
 import { dryRunSwap } from "./execution/swap.js"
 import { capture } from "./posthog.js"
@@ -88,6 +93,16 @@ export class Ledger extends DurableObject<Env> {
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS ticks (
+          mint TEXT NOT NULL,
+          at INTEGER NOT NULL,
+          price REAL,
+          liquidity_usd REAL,
+          buys_24h INTEGER,
+          sells_24h INTEGER,
+          origin TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_ticks_mint_at ON ticks (mint, at);
       `)
       // Rows written before 2026-08-08 were priced by an invented slippage
       // model later measured wrong by ~20x. They are TAGGED rather than
@@ -177,6 +192,24 @@ export class Ledger extends DurableObject<Env> {
     const pnlUsd = proceeds - p.sizeUsd
     const pnlPct = (pnlUsd / p.sizeUsd) * 100
     const effective = p.tokenAmount > 0 ? proceeds / p.tokenAmount : 0
+
+    // Circuit breaker bookkeeping: stops count up, take-profits reset, and a
+    // run of stops at the limit trips a timed pause on NEW entries only.
+    // Time-stops are neutral: they say "nothing happened", not "wrong again".
+    if (reason === "stop-loss" || reason === "safety-exit") {
+      const consec = Number(this.metaGet("breaker_consec") ?? "0") + 1
+      if (consec >= PAPER_POLICY.breaker.consecutiveStopLimit) {
+        const until = now + PAPER_POLICY.breaker.cooldownMinutes * 60_000
+        this.metaSet("breaker_until", String(until))
+        this.metaSet("breaker_consec", "0")
+        this.event("breaker", { tripped: true, until, afterConsecutiveStops: consec })
+        capture(this.env, this.ctx, "breaker_tripped", { after_stops: consec, cooldown_minutes: PAPER_POLICY.breaker.cooldownMinutes })
+      } else {
+        this.metaSet("breaker_consec", String(consec))
+      }
+    } else if (reason === "take-profit") {
+      this.metaSet("breaker_consec", "0")
+    }
     this.sql().exec(
       `UPDATE positions SET closed_at = ?, exit_price = ?, exit_reason = ?, pnl_usd = ?, pnl_pct = ?
        WHERE id = ?`,
@@ -248,6 +281,19 @@ export class Ledger extends DurableObject<Env> {
         this.metaSet(`decimals:${c.mint}`, String(f.decimals))
       }
     }
+
+    // Record every priced observation. This is the beginning of the corpus:
+    // OUR minute-by-minute view of each token's price, liquidity and flow,
+    // which no promotional feed can pollute. Strategy v2's entry signal reads
+    // trajectories from here — what WE watched happen — rather than trusting
+    // a listing's snapshot. Pruned at 48h to respect DO storage.
+    for (const c of everything) {
+      this.sql().exec(
+        "INSERT INTO ticks (mint, at, price, liquidity_usd, buys_24h, sells_24h, origin) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        c.mint, now, c.priceUsd, c.liquidityUsd, c.buys24h, c.sells24h, c.origin,
+      )
+    }
+    this.sql().exec("DELETE FROM ticks WHERE at < ?", now - 48 * 3_600_000)
 
     // Holder concentration costs one call per token, so it is resolved only for
     // tokens that are actual entry candidates or already held — not for the
@@ -324,10 +370,27 @@ export class Ledger extends DurableObject<Env> {
 
     // Entries.
     let entered = 0
-    if (!killed) {
+    const breakerUntil = Number(this.metaGet("breaker_until") ?? "0")
+    const breakerOpen = now < breakerUntil
+    if (!killed && !breakerOpen) {
       const day = new Date(now).toISOString().slice(0, 10)
       const spentToday = Number(this.metaGet(`spend:${day}`) ?? "0")
-      const entries = decideEntries(candidates, this.openPositions(), spentToday, solUsd, policy, now)
+
+      // Our own tape, per candidate: the last few minute-ticks recorded above,
+      // oldest first, straight from what this engine itself observed.
+      const trajectories = new Map<string, Trajectory>()
+      for (const c of candidates) {
+        const rows = this.sql().exec<{ price: number | null; liquidity_usd: number | null }>(
+          "SELECT price, liquidity_usd FROM ticks WHERE mint = ? ORDER BY at DESC LIMIT ?",
+          c.mint, policy.entry.minObservedTicks,
+        ).toArray().reverse()
+        trajectories.set(c.mint, {
+          prices: rows.map((r) => r.price ?? 0),
+          liquidity: rows.map((r) => r.liquidity_usd ?? 0),
+        })
+      }
+
+      const entries = decideEntries(candidates, this.openPositions(), spentToday, solUsd, policy, now, trajectories)
       for (const e of entries) {
         const c = e.candidate
         if (c.priceUsd === null || c.liquidityUsd === null) continue
@@ -340,6 +403,17 @@ export class Ledger extends DurableObject<Env> {
         const q = await quoteBuy(c.mint, e.sizeSol, SLIPPAGE_BPS)
         if (!q) {
           this.event("entry_skipped", { symbol: c.symbol, mint: c.mint, reason: "no route" })
+          continue
+        }
+
+        // Cost hurdle: one-way impact caps roughly half the round trip, and
+        // v1's stop-outs concentrated in exactly the pools this refuses.
+        const impactPct = q.priceImpactPct * 100
+        if (impactPct > policy.entry.maxEntryImpactPct) {
+          this.event("entry_skipped", {
+            symbol: c.symbol, mint: c.mint, reason: "impact above cost hurdle",
+            impactPct: Number(impactPct.toFixed(2)),
+          })
           continue
         }
 
@@ -416,13 +490,19 @@ export class Ledger extends DurableObject<Env> {
     const day = new Date().toISOString().slice(0, 10)
     const spentTodaySol = Number(this.metaGet(`spend:${day}`) ?? "0")
     const openCount = open.length
+    const breakerUntil = Number(this.metaGet("breaker_until") ?? "0")
+    const breakerOpen = Date.now() < breakerUntil
     const budget = {
       spentTodaySol,
       dailyCapSol: PAPER_POLICY.dailyCapSol,
       remainingSol: Math.max(0, PAPER_POLICY.dailyCapSol - spentTodaySol),
       openSlots: Math.max(0, PAPER_POLICY.maxOpenPositions - openCount),
+      breaker: breakerOpen
+        ? { open: true, until: new Date(breakerUntil).toISOString() }
+        : { open: false, consecutiveStops: Number(this.metaGet("breaker_consec") ?? "0") },
       canEnter:
         this.metaGet("kill") !== "1" &&
+        !breakerOpen &&
         openCount < PAPER_POLICY.maxOpenPositions &&
         PAPER_POLICY.dailyCapSol - spentTodaySol >= PAPER_POLICY.perTradeCapSol,
     }

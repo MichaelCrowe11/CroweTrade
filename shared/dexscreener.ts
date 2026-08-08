@@ -46,11 +46,21 @@ interface TokenRef {
   tokenAddress: string
 }
 
+/** Where discovery surfaced a mint. "boost" is PAID promotion. */
+export type DiscoveryOrigin = "profile" | "boost" | "both" | "held"
+
 export interface Candidate {
   mint: string
   symbol: string
   name: string
   dex: string
+  /**
+   * Provenance of the listing itself. Measured 2026-08-08: 61% of entries from
+   * the promotional feeds hit a -35% stop with zero recoveries, which is what
+   * being someone's exit liquidity looks like. Tagging origin lets the record
+   * prove or refute that per cohort instead of arguing about it.
+   */
+  origin: DiscoveryOrigin
   /** Pool account for the deepest venue; the key into the candle fetch. */
   pool: string | null
   priceUsd: number | null
@@ -75,13 +85,19 @@ function estimateSolReserve(liquidityUsd: number | undefined, solUsd: number): b
   return BigInt(Math.round((liquidityUsd / 2 / solUsd) * LAMPORTS_PER_SOL))
 }
 
-function toCandidate(p: DexPair, solUsd: number, now: number): Candidate {
+function toCandidate(
+  p: DexPair,
+  solUsd: number,
+  now: number,
+  origin: DiscoveryOrigin,
+): Candidate {
   const createdAt = p.pairCreatedAt ?? null
   return {
     mint: p.baseToken.address,
     symbol: p.baseToken.symbol,
     name: p.baseToken.name,
     dex: p.dexId,
+    origin,
     pool: p.pairAddress ?? null,
     priceUsd: p.priceUsd ? Number(p.priceUsd) : null,
     changeH1: p.priceChange?.h1 ?? null,
@@ -135,15 +151,21 @@ export async function fetchSolUsd(signal: AbortSignal): Promise<number> {
  * the set of tokens that will actually see volume, which is where the tradeable
  * moves are.
  */
-async function discoverMints(signal: AbortSignal): Promise<string[]> {
+async function discoverMints(signal: AbortSignal): Promise<Map<string, DiscoveryOrigin>> {
   const [profiles, boosts] = await Promise.all([
     getJson<TokenRef[]>(PROFILES, signal).catch(() => [] as TokenRef[]),
     getJson<TokenRef[]>(BOOSTS, signal).catch(() => [] as TokenRef[]),
   ])
-  const solana = [...profiles, ...boosts]
-    .filter((t) => t.chainId === "solana" && t.tokenAddress)
-    .map((t) => t.tokenAddress)
-  return [...new Set(solana)]
+  const origin = new Map<string, DiscoveryOrigin>()
+  for (const t of profiles) {
+    if (t.chainId === "solana" && t.tokenAddress) origin.set(t.tokenAddress, "profile")
+  }
+  for (const t of boosts) {
+    if (t.chainId === "solana" && t.tokenAddress) {
+      origin.set(t.tokenAddress, origin.has(t.tokenAddress) ? "both" : "boost")
+    }
+  }
+  return origin
 }
 
 export interface Scan {
@@ -162,6 +184,7 @@ export async function fetchPairsForMints(
   mints: string[],
   solUsd: number,
   signal: AbortSignal,
+  origins?: Map<string, DiscoveryOrigin>,
 ): Promise<Candidate[]> {
   if (mints.length === 0) return []
 
@@ -183,7 +206,12 @@ export async function fetchPairsForMints(
 
   for (const pair of results.flat()) {
     if (pair.chainId !== "solana") continue
-    const candidate = toCandidate(pair, solUsd, now)
+    const candidate = toCandidate(
+      pair,
+      solUsd,
+      now,
+      origins?.get(pair.baseToken.address) ?? "held",
+    )
     // A token can list on several venues. Keep the deepest pool, since that is
     // the one an exit would actually route through.
     const existing = byMint.get(candidate.mint)
@@ -202,10 +230,10 @@ export async function fetchPairsForMints(
  * a list ordered by anything else buries the only rows that matter.
  */
 export async function fetchCandidates(signal: AbortSignal): Promise<Scan> {
-  const [solUsd, mints] = await Promise.all([fetchSolUsd(signal), discoverMints(signal)])
-  if (mints.length === 0) return { candidates: [], solUsd }
+  const [solUsd, origins] = await Promise.all([fetchSolUsd(signal), discoverMints(signal)])
+  if (origins.size === 0) return { candidates: [], solUsd }
 
-  const priced = await fetchPairsForMints(mints, solUsd, signal)
+  const priced = await fetchPairsForMints([...origins.keys()], solUsd, signal, origins)
   const candidates = priced
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
     .slice(0, 50)
