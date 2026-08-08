@@ -18,7 +18,12 @@ import {
   fetchPairsForMints,
   type Candidate,
 } from "../../shared/dexscreener.js"
-import { fetchMintFacts, type MintFacts } from "../../shared/solana.js"
+import {
+  fetchMintFacts,
+  fetchTopHolderShare,
+  configureRpc,
+  type MintFacts,
+} from "../../shared/solana.js"
 import { evaluateGates, combineVerdict, type Verdict } from "../../shared/gates.js"
 import { PAPER_POLICY, policyHash } from "../../shared/policy.js"
 import { decideEntries, decideExits, type OpenPosition } from "./strategy.js"
@@ -193,6 +198,9 @@ export class Ledger extends DurableObject<Env> {
     const now = Date.now()
     const signal = new AbortController().signal
     const policy = PAPER_POLICY
+    // Point the shared RPC at Helius when the key is present. Without it the
+    // holder call is rate-limited to uselessness and that gate stays blind.
+    configureRpc(this.env.HELIUS_API_KEY)
     const hash = await policyHash(policy)
     if (this.metaGet("policy_hash") !== hash) {
       this.metaSet("policy_hash", hash)
@@ -240,6 +248,45 @@ export class Ledger extends DurableObject<Env> {
         this.metaSet(`decimals:${c.mint}`, String(f.decimals))
       }
     }
+
+    // Holder concentration costs one call per token, so it is resolved only for
+    // tokens that are actual entry candidates or already held — not for the
+    // whole scan list, which would burn the daily credit budget on tokens the
+    // policy would reject anyway.
+    const heldMints = new Set(open.map((p) => p.mint))
+    const worthChecking = everything.filter((c) => {
+      if (heldMints.has(c.mint)) return true
+      if (c.createdAt === null || c.liquidityUsd === null) return false
+      const ageMin = (now - c.createdAt) / 60_000
+      return (
+        ageMin >= policy.entry.minTokenAgeMinutes &&
+        ageMin <= policy.entry.maxTokenAgeMinutes &&
+        c.liquidityUsd >= policy.entry.minLiquidityUsd &&
+        c.changeH1 !== null &&
+        c.changeH1 <= policy.entry.maxChangeH1Pct
+      )
+    })
+
+    // Hard cap per tick. A Worker has a finite subrequest budget and the tick
+    // already spends it on discovery, pricing, quotes and simulations; firing
+    // one unbounded holder call per candidate on top of that exhausts it and
+    // takes the whole tick down. Held positions are checked first because an
+    // open position turning concentrated is more urgent than screening a new
+    // one, and it also bounds the daily RPC credit spend.
+    const HOLDER_CHECKS_PER_TICK = 10
+    const ordered = [
+      ...worthChecking.filter((c) => heldMints.has(c.mint)),
+      ...worthChecking.filter((c) => !heldMints.has(c.mint)),
+    ].slice(0, HOLDER_CHECKS_PER_TICK)
+
+    await Promise.all(
+      ordered.map(async (c) => {
+        const f = facts.get(c.mint)
+        if (!f) return
+        const share = await fetchTopHolderShare(c.mint, f.supply, signal)
+        if (share !== undefined) c.snapshot.topHolderShare = share
+      }),
+    )
 
     // Exits run even when killed: the kill switch stops NEW risk, never risk
     // management. Requested vetoes inside their window exit first.
@@ -363,10 +410,32 @@ export class Ledger extends DurableObject<Env> {
     const legacy = sql.exec<{ n: number }>(
       "SELECT COUNT(*) AS n FROM positions WHERE closed_at IS NOT NULL AND priced_by = 'model'",
     ).one()
+    // Why the engine is or is not trading, without needing a log dive. A
+    // silent engine and a capped engine look identical from the outside, and
+    // that ambiguity cost a debugging cycle.
+    const day = new Date().toISOString().slice(0, 10)
+    const spentTodaySol = Number(this.metaGet(`spend:${day}`) ?? "0")
+    const openCount = open.length
+    const budget = {
+      spentTodaySol,
+      dailyCapSol: PAPER_POLICY.dailyCapSol,
+      remainingSol: Math.max(0, PAPER_POLICY.dailyCapSol - spentTodaySol),
+      openSlots: Math.max(0, PAPER_POLICY.maxOpenPositions - openCount),
+      canEnter:
+        this.metaGet("kill") !== "1" &&
+        openCount < PAPER_POLICY.maxOpenPositions &&
+        PAPER_POLICY.dailyCapSol - spentTodaySol >= PAPER_POLICY.perTradeCapSol,
+    }
+
     return {
       mode: "paper",
       killed: this.metaGet("kill") === "1",
       policyHash: this.metaGet("policy_hash"),
+      budget,
+      // Recent decisions, including rejections. The engine already recorded why
+      // it declined each candidate; not exposing that made a silent engine
+      // indistinguishable from a broken one.
+      events: sql.exec("SELECT at, kind, data FROM events ORDER BY at DESC LIMIT 25").toArray(),
       open, closed,
       stats: {
         closedCount: totals.n,

@@ -16,8 +16,9 @@
  * fail at, and no competitor screens for it because it costs an extra call.
  */
 
+import { currentRpc } from "../../../shared/solana.js"
+
 const SWAP = "https://lite-api.jup.ag/swap/v1/swap"
-const RPC = "https://api.mainnet-beta.solana.com"
 
 /**
  * Stand-in owner for dry runs.
@@ -82,7 +83,7 @@ export async function dryRunSwap(quoteResponse: unknown): Promise<DryRun> {
   const priorityFeeLamports = built.prioritizationFeeLamports ?? null
 
   try {
-    const res = await fetch(RPC, {
+    const res = await fetch(currentRpc(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

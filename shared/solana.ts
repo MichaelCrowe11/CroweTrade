@@ -17,7 +17,37 @@
  * does not change when the endpoint does.
  */
 
-const RPC = "https://api.mainnet-beta.solana.com"
+const PUBLIC_RPC = "https://api.mainnet-beta.solana.com"
+
+/**
+ * Endpoint selection.
+ *
+ * The public RPC rate-limits the calls that matter most: getTokenLargestAccounts
+ * returned 429 on every attempt, which is why holder concentration read
+ * "unknown" for every token and capped every verdict at caution. A Helius key
+ * lifts that. The public endpoint stays as the fallback so the terminal keeps
+ * working for anyone without a key.
+ */
+let rpcEndpoint = PUBLIC_RPC
+
+export function configureRpc(heliusApiKey: string | undefined): void {
+  rpcEndpoint = heliusApiKey
+    ? `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`
+    : PUBLIC_RPC
+}
+
+/**
+ * The endpoint every RPC caller must use.
+ *
+ * Exported because the swap simulator needs the SAME endpoint: the public RPC
+ * answers 403 to requests originating from Cloudflare, so a Worker simulating
+ * against it fails every time while the identical call from a laptop succeeds.
+ * That divergence silently blocked every entry until the rejection events were
+ * surfaced.
+ */
+export function currentRpc(): string {
+  return rpcEndpoint
+}
 
 /** getMultipleAccounts caps at 100 addresses; stay well under to avoid 413s. */
 const MAX_ACCOUNTS_PER_CALL = 50
@@ -48,7 +78,7 @@ interface RpcResponse<T> {
 }
 
 async function rpc<T>(method: string, params: unknown[], signal: AbortSignal): Promise<T> {
-  const res = await fetch(RPC, {
+  const res = await fetch(rpcEndpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
@@ -59,6 +89,47 @@ async function rpc<T>(method: string, params: unknown[], signal: AbortSignal): P
   if (body.error) throw new Error(`${method}: ${body.error.message ?? "rpc error"}`)
   if (body.result?.value === undefined) throw new Error(`${method}: empty result`)
   return body.result.value
+}
+
+interface LargestAccount {
+  address: string
+  amount: string
+}
+
+/**
+ * Largest non-pool holder's share of supply, 0..1.
+ *
+ * The pool itself is always the biggest "holder" and is not a risk — it is the
+ * liquidity. Skipping the top entry approximates removing it. That is a
+ * heuristic, and it is why this reads share-of-supply rather than claiming to
+ * identify the deployer: it answers "can one wallet dump enough to crater
+ * this", which is the actual question, without pretending to know whose wallet.
+ *
+ * This matters more on Pump.fun than classic LP-rug screening does. Graduation
+ * burns the LP, so migration liquidity genuinely cannot be pulled; the residual
+ * rug vector is a dev allocation dumping into that locked liquidity. This gate
+ * is the one that sees it.
+ */
+export async function fetchTopHolderShare(
+  mint: string,
+  supply: bigint,
+  signal: AbortSignal,
+): Promise<number | undefined> {
+  if (supply <= 0n) return undefined
+  try {
+    const accounts = await rpc<LargestAccount[]>(
+      "getTokenLargestAccounts",
+      [mint],
+      signal,
+    )
+    // Index 1: index 0 is the pool. Fewer than two holders means there is no
+    // meaningful distribution to measure yet, not that concentration is zero.
+    const topNonPool = accounts[1]
+    if (!topNonPool) return undefined
+    return Number(BigInt(topNonPool.amount)) / Number(supply)
+  } catch {
+    return undefined
+  }
 }
 
 /**

@@ -79,8 +79,12 @@ export default {
       }
       return json({ error: "not found" }, 404)
     } catch (e) {
-      console.error(JSON.stringify({ msg: "unhandled", error: e instanceof Error ? e.stack : String(e) }))
-      return json({ error: "internal" }, 500)
+      const message = e instanceof Error ? e.message : String(e)
+      console.error(JSON.stringify({ msg: "unhandled", error: e instanceof Error ? e.stack : message }))
+      // Surface the message to the caller. This is an operator endpoint behind
+      // a bearer token, not a public surface, and a bare "internal" cost a full
+      // debugging round trip that the message alone would have answered.
+      return json({ error: "internal", message }, 500)
     }
   },
 } satisfies ExportedHandler<Env>
