@@ -32,6 +32,7 @@ import {
   type OpenPosition,
   type Trajectory,
 } from "./strategy.js"
+import { computeFeatures } from "../../shared/features.js"
 import { quoteBuy, quoteSell, LAMPORTS_PER_SOL } from "./execution/jupiter.js"
 import { dryRunSwap } from "./execution/swap.js"
 import { capture } from "./posthog.js"
@@ -103,6 +104,23 @@ export class Ledger extends DurableObject<Env> {
           origin TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_ticks_mint_at ON ticks (mint, at);
+        CREATE TABLE IF NOT EXISTS decisions (
+          mint TEXT PRIMARY KEY,
+          at INTEGER NOT NULL,
+          symbol TEXT NOT NULL,
+          price REAL,
+          origin TEXT,
+          verdict TEXT,
+          features TEXT NOT NULL,
+          eligible INTEGER NOT NULL,
+          skip_reason TEXT,
+          entered INTEGER NOT NULL DEFAULT 0,
+          entry_impact_pct REAL,
+          labeled INTEGER NOT NULL DEFAULT 0,
+          forward_ret_pct REAL,
+          died INTEGER,
+          labeled_at INTEGER
+        );
       `)
       // Rows written before 2026-08-08 were priced by an invented slippage
       // model later measured wrong by ~20x. They are TAGGED rather than
@@ -196,6 +214,23 @@ export class Ledger extends DurableObject<Env> {
     // Circuit breaker bookkeeping: stops count up, take-profits reset, and a
     // run of stops at the limit trips a timed pause on NEW entries only.
     // Time-stops are neutral: they say "nothing happened", not "wrong again".
+    // Loss-velocity trip (from the old repo's one production-quality risk
+    // module): rate of loss, not level of loss. A drawdown limit sampled
+    // per-minute observes the corpse; a velocity trip fires during the event.
+    // Internal plumbing, not envelope policy, so the v2 hash stays stable.
+    const VELOCITY_WINDOW_MS = 15 * 60_000
+    const VELOCITY_MAX_LOSS_USD = 30
+    const recentLoss = this.sql().exec<{ pnl: number | null }>(
+      "SELECT SUM(pnl_usd) AS pnl FROM positions WHERE closed_at >= ? AND priced_by = 'quote'",
+      now - VELOCITY_WINDOW_MS,
+    ).one().pnl ?? 0
+    if (recentLoss + pnlUsd < -VELOCITY_MAX_LOSS_USD) {
+      const until = now + PAPER_POLICY.breaker.cooldownMinutes * 60_000
+      this.metaSet("breaker_until", String(until))
+      this.event("breaker", { tripped: true, kind: "loss-velocity", windowLossUsd: recentLoss + pnlUsd, until })
+      capture(this.env, this.ctx, "breaker_tripped", { kind: "loss_velocity", window_loss_usd: recentLoss + pnlUsd })
+    }
+
     if (reason === "stop-loss" || reason === "safety-exit") {
       const consec = Number(this.metaGet("breaker_consec") ?? "0") + 1
       if (consec >= PAPER_POLICY.breaker.consecutiveStopLimit) {
@@ -294,6 +329,83 @@ export class Ledger extends DurableObject<Env> {
       )
     }
     this.sql().exec("DELETE FROM ticks WHERE at < ?", now - 48 * 3_600_000)
+
+    // ── The calibration loop, half one: decision snapshots. ────────────────
+    // One row per mint, taken the FIRST time we have enough of our own ticks
+    // to compute features. Skipped tokens are recorded as deliberately as
+    // entered ones: calibration lives in the counterfactuals — what happened
+    // to the launches we refused — and a dataset of entries alone can never
+    // separate the policy's judgment from the market's behavior.
+    for (const c of candidates) {
+      const exists = this.sql().exec<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM decisions WHERE mint = ?", c.mint,
+      ).one().n
+      if (exists > 0) continue
+
+      const rows = this.sql().exec<{
+        price: number | null; liquidity_usd: number | null
+        buys_24h: number | null; sells_24h: number | null
+      }>(
+        "SELECT price, liquidity_usd, buys_24h, sells_24h FROM ticks WHERE mint = ? ORDER BY at DESC LIMIT 6",
+        c.mint,
+      ).toArray().reverse()
+      if (rows.length < policy.entry.minObservedTicks) continue
+
+      const feats = computeFeatures({
+        prices: rows.map((r) => r.price ?? 0),
+        liquidity: rows.map((r) => r.liquidity_usd ?? 0),
+        buys24h: rows.map((r) => r.buys_24h ?? 0),
+        sells24h: rows.map((r) => r.sells_24h ?? 0),
+      })
+
+      const verdict = combineVerdict(evaluateGates(c.snapshot))
+      const ageMin = c.createdAt === null ? null : (now - c.createdAt) / 60_000
+      const skipReason =
+        c.origin === "boost" && policy.entry.excludeBoosted ? "boosted"
+        : ageMin === null || ageMin < policy.entry.minTokenAgeMinutes ? "too-new"
+        : ageMin > policy.entry.maxTokenAgeMinutes ? "too-old"
+        : c.liquidityUsd === null || c.liquidityUsd < policy.entry.minLiquidityUsd ? "thin"
+        : c.changeH1 === null || c.changeH1 > policy.entry.maxChangeH1Pct ? "parabolic"
+        : verdict === "blocked" || verdict === "insufficient-data" ? `verdict-${verdict}`
+        : null
+
+      this.sql().exec(
+        `INSERT INTO decisions (mint, at, symbol, price, origin, verdict, features, eligible, skip_reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        c.mint, now, c.symbol, c.priceUsd, c.origin, verdict,
+        JSON.stringify(feats), skipReason === null ? 1 : 0, skipReason,
+      )
+    }
+
+    // Half two: outcomes. Thirty minutes after a decision snapshot, score it
+    // from our own subsequent ticks. Every labeled row is one training example
+    // for the calibrated edge model: features at decision time, then what the
+    // market actually did. This is the dataset "crack the algorithm" needs.
+    const toLabel = this.sql().exec<{ mint: string; price: number | null; features: string; eligible: number; entered: number }>(
+      "SELECT mint, price, features, eligible, entered FROM decisions WHERE labeled = 0 AND at <= ? LIMIT 20",
+      now - 30 * 60_000,
+    ).toArray()
+    for (const d of toLabel) {
+      const latest = this.sql().exec<{ at: number; price: number | null; liquidity_usd: number | null }>(
+        "SELECT at, price, liquidity_usd FROM ticks WHERE mint = ? ORDER BY at DESC LIMIT 1", d.mint,
+      ).toArray()[0]
+      const last = latest ?? null
+      const stale = last === null || now - last.at > 10 * 60_000
+      const ret = d.price && d.price > 0 && last?.price
+        ? ((last.price - d.price) / d.price) * 100
+        : null
+      // Dead = we stopped seeing it, its pool bled out, or it lost ~everything.
+      // Disappearing from every feed IS the modal death and must count as one.
+      const died = stale || (last?.liquidity_usd ?? 0) < 500 || (ret !== null && ret <= -90)
+      this.sql().exec(
+        "UPDATE decisions SET labeled = 1, forward_ret_pct = ?, died = ?, labeled_at = ? WHERE mint = ?",
+        ret, died ? 1 : 0, now, d.mint,
+      )
+      capture(this.env, this.ctx, "outcome_labeled", {
+        mint: d.mint, eligible: d.eligible === 1, entered: d.entered === 1,
+        forward_ret_pct: ret, died, ...JSON.parse(d.features) as Record<string, unknown>,
+      })
+    }
 
     // Holder concentration costs one call per token, so it is resolved only for
     // tokens that are actual entry candidates or already held — not for the
@@ -445,6 +557,10 @@ export class Ledger extends DurableObject<Env> {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'quote')`,
           id, c.mint, c.symbol, entryPrice, e.sizeSol, sizeUsd, tokenAmount, now, hash, e.verdict,
         )
+        this.sql().exec(
+          "UPDATE decisions SET entered = 1, entry_impact_pct = ? WHERE mint = ? AND labeled = 0",
+          impactPct, c.mint,
+        )
         this.event("entry", {
           id, symbol: c.symbol, mint: c.mint, sizeSol: e.sizeSol, entryPrice,
           verdict: e.verdict, impact: q.priceImpactPct, route: q.route,
@@ -507,11 +623,34 @@ export class Ledger extends DurableObject<Env> {
         PAPER_POLICY.dailyCapSol - spentTodaySol >= PAPER_POLICY.perTradeCapSol,
     }
 
+    // The calibration dataset's own health readout: how many decisions taken,
+    // how many labeled, and the early separation between what we entered and
+    // what we refused. When labeled counts reach the hundreds, this block is
+    // where the first evidence of (or against) edge will surface.
+    const cal = sql.exec<{
+      decisions: number; labeled: number; died: number | null
+      entered_ret: number | null; skipped_ret: number | null
+    }>(
+      `SELECT COUNT(*) AS decisions,
+              SUM(labeled) AS labeled,
+              SUM(CASE WHEN labeled = 1 AND died = 1 THEN 1 ELSE 0 END) AS died,
+              AVG(CASE WHEN labeled = 1 AND entered = 1 THEN forward_ret_pct END) AS entered_ret,
+              AVG(CASE WHEN labeled = 1 AND entered = 0 AND eligible = 1 THEN forward_ret_pct END) AS skipped_ret
+       FROM decisions`,
+    ).one()
+
     return {
       mode: "paper",
       killed: this.metaGet("kill") === "1",
       policyHash: this.metaGet("policy_hash"),
       budget,
+      calibration: {
+        decisions: cal.decisions,
+        labeled: cal.labeled ?? 0,
+        deathRate: (cal.labeled ?? 0) > 0 ? (cal.died ?? 0) / (cal.labeled ?? 1) : null,
+        avgForwardRetEnteredPct: cal.entered_ret,
+        avgForwardRetEligibleSkippedPct: cal.skipped_ret,
+      },
       // Recent decisions, including rejections. The engine already recorded why
       // it declined each candidate; not exposing that made a silent engine
       // indistinguishable from a broken one.
