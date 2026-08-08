@@ -19,10 +19,46 @@ interface EnginePosition {
   verdict_entry: string
 }
 
+interface EngineEvent {
+  at: number
+  kind: string
+  data: string
+}
+
 interface EngineSummary {
   killed: boolean
   open: EnginePosition[]
   stats: { closedCount: number; totalPnlUsd: number; winRate: number | null }
+  budget?: { spentTodaySol: number; dailyCapSol: number; canEnter: boolean }
+  events?: EngineEvent[]
+}
+
+/** One line per engine decision: what, who, and why when it declined. */
+function describeEvent(e: EngineEvent): { label: string; detail: string; kind: string } {
+  try {
+    const d = JSON.parse(e.data) as Record<string, unknown>
+    const sym = typeof d["symbol"] === "string" ? d["symbol"] : ""
+    switch (e.kind) {
+      case "entry":
+        return { kind: "entry", label: `ENTER ${sym}`, detail: `${String(d["verdict"])}` }
+      case "exit": {
+        const pnl = typeof d["pnlUsd"] === "number" ? d["pnlUsd"] : 0
+        return {
+          kind: pnl >= 0 ? "exit-win" : "exit-loss",
+          label: `EXIT ${sym}`,
+          detail: `${String(d["reason"])} ${pnl >= 0 ? "+" : "-"}$${Math.abs(pnl).toFixed(2)}`,
+        }
+      }
+      case "entry_skipped":
+        return { kind: "skip", label: `SKIP ${sym}`, detail: String(d["reason"] ?? "") }
+      case "kill":
+        return { kind: "skip", label: "KILL", detail: d["on"] ? "engaged" : "released" }
+      default:
+        return { kind: "skip", label: e.kind.toUpperCase(), detail: "" }
+    }
+  } catch {
+    return { kind: "skip", label: e.kind, detail: "" }
+  }
 }
 
 /** Verdict, or null when the combination policy has not been written yet. */
@@ -291,12 +327,38 @@ export default function App() {
                     </div>
                   </>
                 )}
+                {engine?.budget && (
+                  <div className="exec__row">
+                    <span className="exec__key">DAY SPEND</span>
+                    <span className="exec__value">
+                      {engine.budget.spentTodaySol.toFixed(2)} / {engine.budget.dailyCapSol} SOL
+                    </span>
+                  </div>
+                )}
                 <p className="exec__note">
                   Simulated capital under full envelope discipline, running in the
                   cloud. Live execution arms only after a signer with hard caps
                   and a fresh signed envelope.
                 </p>
               </div>
+
+              {engine?.events && engine.events.length > 0 && (
+                <>
+                  <h2 className="pane__title pane__title--section">Decisions</h2>
+                  <div className="decisions">
+                    {engine.events.slice(0, 12).map((e) => {
+                      const v = describeEvent(e)
+                      return (
+                        <div key={`${e.at}-${v.label}`} className={`decision decision--${v.kind}`}>
+                          <span className="decision__label mono">{v.label}</span>
+                          <span className="decision__detail">{v.detail}</span>
+                          <span className="decision__age mono">{age(e.at, now)}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
             </>
           )}
         </aside>

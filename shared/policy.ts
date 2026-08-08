@@ -79,7 +79,15 @@ export const PAPER_POLICY: PolicyEnvelope = {
   product: "crowetrade-paper",
   waiverSha256: "unsigned-paper-phase",
   perTradeCapSol: 0.5,
-  dailyCapSol: 10,
+  /**
+   * Raised 10 -> 50 on 2026-08-08 to accelerate the validation sample toward
+   * the 100-close funding criterion. This changes how MANY trades happen, not
+   * the character of any trade — per-trade sizing, entry filters and exits are
+   * untouched — so per-trade expectancy statistics stay comparable across the
+   * hash boundary. A live envelope would never move this way without a fresh
+   * signature; paper is where the dial is allowed to be cheap.
+   */
+  dailyCapSol: 50,
   maxOpenPositions: 8,
   entry: {
     minVerdict: "caution",
