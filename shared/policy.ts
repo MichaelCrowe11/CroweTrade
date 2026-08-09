@@ -129,7 +129,25 @@ export const PAPER_POLICY: PolicyEnvelope = {
   entry: {
     minVerdict: "caution",
     maxTokenAgeMinutes: 90,
-    minTokenAgeMinutes: 15,
+    /**
+     * Lowered 15 -> 3 on 2026-08-09, and this is the most consequential dial
+     * turn in the project so far.
+     *
+     * The 15-minute floor was tuned for the promotional feed, where tokens
+     * arrive hours old. Launchpad tokens arrive SECONDS old and fall out of the
+     * listing before they age in, so the floor did not filter them, it made
+     * them unreachable: 346 decisions skipped as too-new, zero launchpad
+     * entries ever.
+     *
+     * That matters because the two universes are not equally dangerous.
+     * Measured over the same 30-minute horizon: launchpad death rate 0.108,
+     * promotional feed 0.524. We proved one universe was dead and then kept
+     * trading only that one, because the floor locked us out of the other.
+     *
+     * Three ticks of our own observation are still required before entry, so
+     * "3 minutes" is the real floor regardless of what this says.
+     */
+    minTokenAgeMinutes: 3,
     minLiquidityUsd: 3_000,
     maxChangeH1Pct: 80,
     maxEntryImpactPct: 1.5,

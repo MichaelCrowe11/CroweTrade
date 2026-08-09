@@ -169,7 +169,7 @@ body {
   display: grid;
   grid-template-columns: 1fr auto auto;
   grid-template-rows: auto auto;
-  gap: 4px 10px;
+  gap: 3px 10px;
   align-items: center;
   width: 100%;
   padding: 11px 16px;
@@ -190,10 +190,11 @@ body {
 .scan__row[aria-selected="true"] {
   background: var(--clm-panel);
   border-left-color: var(--clm-gold);
+  box-shadow: inset 0 1px 0 var(--clm-hair-top);
 }
 
 .scan__symbol { grid-column: 1; grid-row: 1; font-weight: 550; letter-spacing: 0.01em; }
-.scan__age { grid-column: 1 / span 2; grid-row: 2; font-size: 11px; color: var(--clm-muted); }
+.scan__age { grid-column: 1; grid-row: 2; font-size: 11px; color: var(--clm-muted); }
 
 .scan__change {
   grid-column: 2;
@@ -215,6 +216,17 @@ body {
 }
 
 .scan__origin--paid { color: var(--clm-lamp-fail); opacity: 0.75; }
+
+/* ── Row sparkline ──────────────────────────────────────────────────────── */
+
+.spark { grid-column: 2; grid-row: 2; width: 64px; height: 18px; align-self: center; }
+.spark--empty { display: block; }
+.spark__line { fill: none; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.spark__fill { stroke: none; }
+.spark--up .spark__line { stroke: var(--clm-gold); }
+.spark--up .spark__fill { fill: var(--clm-gold); opacity: 0.13; }
+.spark--down .spark__line { stroke: rgba(212, 87, 78, 0.85); }
+.spark--down .spark__fill { fill: rgba(212, 87, 78, 1); opacity: 0.1; }
 
 .scan__change--up { color: var(--clm-gold-soft); }
 .scan__change--down { color: rgba(212, 87, 78, 0.78); }
@@ -242,7 +254,17 @@ body {
   padding: 40px 44px;
 }
 
-.primary__identity { display: flex; flex-direction: column; gap: 6px; }
+.primary__identity {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: -40px -44px 0;
+  padding: 28px 44px 16px;
+  background: linear-gradient(var(--clm-cream) 78%, transparent);
+}
 
 .primary__titlerow { display: flex; align-items: baseline; gap: 14px; }
 
@@ -258,7 +280,7 @@ body {
 
 .primary__symbol {
   font-family: var(--clm-font-display);
-  font-size: 40px;
+  font-size: var(--clm-fs-display);
   font-weight: 600;
   line-height: 1.1;
   letter-spacing: -0.01em;
@@ -277,12 +299,13 @@ body {
 .chart {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 18px 20px 12px;
+  gap: 12px;
+  padding: 20px 22px 14px;
   border: 1px solid var(--clm-line);
-  border-radius: var(--clm-radius);
+  border-top-color: var(--clm-hair-top);
+  border-radius: var(--clm-r-lg);
   background: var(--clm-panel);
-  box-shadow: var(--clm-z1);
+  box-shadow: var(--clm-z2);
 }
 
 .chart--empty {
@@ -342,12 +365,15 @@ body {
   display: flex;
   align-items: baseline;
   gap: 16px;
-  padding: 22px 24px;
-  border: 1px solid var(--clm-line-strong);
-  border-left-width: 3px;
-  border-radius: var(--clm-radius);
-  background: var(--clm-panel);
-  box-shadow: var(--clm-z1);
+  padding: 22px 26px;
+  border: 1px solid var(--clm-line);
+  /* Lit bevel: the top edge catches light, which is what makes a surface read
+   * as raised rather than merely outlined. */
+  border-top-color: var(--clm-hair-top);
+  border-left: 3px solid var(--clm-line-strong);
+  border-radius: var(--clm-r-lg);
+  background: var(--clm-raised);
+  box-shadow: var(--clm-z2);
 }
 
 .verdict__word {
@@ -378,9 +404,11 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 1px;
   border: 1px solid var(--clm-line);
-  border-radius: var(--clm-radius);
+  border-top-color: var(--clm-hair-top);
+  border-radius: var(--clm-r-lg);
   background: var(--clm-line);
   overflow: hidden;
+  box-shadow: var(--clm-z2);
 }
 
 .lamp {

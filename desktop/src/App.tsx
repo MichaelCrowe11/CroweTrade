@@ -5,6 +5,7 @@ import { evaluateGates, combineVerdict, type Verdict } from "./safety/gates.js"
 import { Annunciator } from "./components/Annunciator.js"
 import { PriceChart } from "./components/PriceChart.js"
 import { age, usd, shortMint } from "./components/format.js"
+import { Spark } from "./components/Spark.js"
 
 const REFRESH_MS = 20_000
 const ENGINE = "https://crowetrade-engine.yellow-block-3adc.workers.dev"
@@ -95,6 +96,10 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [now, setNow] = useState(() => Date.now())
   const [engine, setEngine] = useState<EngineSummary | null>(null)
+  // Rolling price trace per mint, built from successive scans. The engine keeps
+  // its own tick history, but the terminal polls on its own schedule and this
+  // costs no extra request.
+  const [trace, setTrace] = useState<Map<string, number[]>>(new Map())
 
   // One controller per mount, aborted on unmount, so an in-flight request from
   // a closing window cannot resolve into a setState on a dead component.
@@ -113,6 +118,16 @@ export default function App() {
       // merely uninformed.
       setCandidates(scan.candidates)
       setSolUsd(scan.solUsd)
+      setTrace((prev) => {
+        const next = new Map(prev)
+        for (const c of scan.candidates) {
+          if (c.priceUsd === null) continue
+          // 40 points is about 13 minutes at the current refresh, which is the
+          // window where these tokens actually resolve.
+          next.set(c.mint, [...(next.get(c.mint) ?? []), c.priceUsd].slice(-40))
+        }
+        return next
+      })
       setError(null)
       setSelected((cur) => cur ?? scan.candidates[0]?.mint ?? null)
 
@@ -231,6 +246,7 @@ export default function App() {
               >
                 <span className="scan__symbol">{c.symbol}</span>
                 <span className={`scan__flag scan__flag--${flagFor(c)}`} aria-hidden="true" />
+                <Spark points={trace.get(c.mint) ?? []} up={chUp} />
                 <span className="scan__age mono">
                   {age(c.createdAt, now)} / {usd(c.liquidityUsd)}
                   {/* Which universe this came from. The promotional feeds and

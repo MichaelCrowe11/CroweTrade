@@ -55,9 +55,38 @@
   --clm-accent-wash: rgba(210, 173, 98, 0.14);
   --clm-focus-halo: rgba(210, 173, 98, 0.22);
 
-  /* Square, per the design spec. Pill is reserved for the eyebrow only. */
-  --clm-radius: 0.125rem;
+  /* Radius, type and elevation scales ported from the Crowe Logic Desktop
+   * renderer, which is the canonical source the crowelm.com tokens themselves
+   * derive from. This terminal previously used a single 2px radius and a flat
+   * two-step elevation, which made it read as a debug view rather than a
+   * product surface: the house language has a graded rise, and flattening it
+   * removes the depth that tells the eye what sits on top of what.
+   * Pill is for status tokens only — a thing you read, never a thing you click. */
+  --clm-r-xs: 3px;
+  --clm-r-sm: 6px;
+  --clm-r-md: 6px;
+  --clm-r-lg: 9px;
+  --clm-r-xl: 11px;
+  --clm-r-pill: 999px;
+
+  --clm-fs-cap: 11px;
+  --clm-fs-sm: 12.5px;
+  --clm-fs-body: 14px;
+  --clm-fs-head: 17.5px;
+  --clm-fs-display: 30px;
+
+  /* Depth is a lightness step plus a brighter top edge (the "lit bevel"),
+   * with tinted shadows only. Never a border that just gets darker. */
+  --clm-z3: 0 2px 4px rgba(3, 3, 5, 0.5), 0 22px 56px -20px rgba(3, 3, 5, 0.6),
+    inset 0 1px 0 var(--clm-hair-top);
+
+  --clm-dur-fast: 80ms;
+  --clm-dur: 120ms;
+  --clm-dur-slow: 200ms;
   --clm-ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Retained for the few places a hard edge is correct (rules, lamps). */
+  --clm-radius: var(--clm-r-sm);
 
   /* Annunciator states. Red is the ONLY non-brand hue in the app and it earns
    * its place: a failed critical gate is the one thing that must never be
