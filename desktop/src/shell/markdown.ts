@@ -9,8 +9,43 @@
  */
 
 export interface InlineSegment {
-  kind: "text" | "strong" | "code"
+  kind: "text" | "strong" | "code" | "num" | "strong-num"
   text: string
+}
+
+/**
+ * The instrument rule, applied to prose: financial figures inside an answer
+ * are their own segments so the renderer can set them in tabular mono.
+ * Matches signed currency, percents, amounts with a SOL unit, and bare
+ * counts; leaves numbers embedded in hyphenated words ("30-minute") as text,
+ * and never re-segments code spans.
+ */
+const NUM_RE = /[-+]?\$?\d[\d,]*(?:\.\d+)?(?:%|\s?SOL\b)?/g
+
+function splitNumbers(seg: InlineSegment): InlineSegment[] {
+  const numKind = seg.kind === "strong" ? "strong-num" : "num"
+  const out: InlineSegment[] = []
+  let cursor = 0
+  for (const m of seg.text.matchAll(NUM_RE)) {
+    const start = m.index
+    const end = start + m[0].length
+    const before = seg.text[start - 1]
+    const after = seg.text[end]
+    // A digit glued to a letter or hyphen on either side is part of a word
+    // ("30-minute", "sha256"), not a figure.
+    if ((before && /[\w-]/.test(before)) || (after && /[\w-]/.test(after))) continue
+    if (start > cursor) out.push({ kind: seg.kind, text: seg.text.slice(cursor, start) })
+    out.push({ kind: numKind, text: m[0] })
+    cursor = end
+  }
+  if (cursor < seg.text.length) out.push({ kind: seg.kind, text: seg.text.slice(cursor) })
+  return out.length > 0 ? out : [seg]
+}
+
+export function segmentRich(text: string): InlineSegment[] {
+  return segmentInline(text).flatMap((seg) =>
+    seg.kind === "code" ? [seg] : splitNumbers(seg),
+  )
 }
 
 const MARKERS: { open: string; kind: "strong" | "code" }[] = [

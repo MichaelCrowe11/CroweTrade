@@ -17,61 +17,70 @@ import { DURATIONS, EASINGS, MAGNITUDES } from "./motion.js"
 
 type RailKey = PanelType | "analyst" | "orchestrator"
 
+/* Every icon carries ONE gold accent: the element that is the point of the
+ * surface (the lit lamp, the trace tip, the live cursor). The set stays
+ * stroke-drawn in the house 1.6 weight; the accent is what makes it ours. */
 const ICONS: Record<RailKey, JSX.Element> = {
-  // Scan: a list.
+  // Scan: a list, the selected row marked.
   scan: (
     <>
-      <path d="M4 7h16M4 12h16M4 17h10" />
+      <path d="M7 7h13M7 12h13M7 17h7" />
+      <circle cx="4" cy="7" r="1.3" fill="var(--clm-gold)" stroke="none" />
     </>
   ),
-  // Chart: a rising trace.
+  // Chart: a rising trace with a lit tip.
   chart: (
     <>
       <path d="M4 17l5-6 4 3 7-8" />
       <path d="M4 20h16" opacity="0.4" />
+      <circle cx="20" cy="6" r="1.6" fill="var(--clm-gold)" stroke="none" />
     </>
   ),
-  // Gates: an annunciator lamp grid.
+  // Gates: an annunciator lamp grid, one lamp lit.
   gates: (
     <>
       <rect x="4" y="5" width="7" height="6" rx="1" />
       <rect x="13" y="5" width="7" height="6" rx="1" />
       <rect x="4" y="13" width="7" height="6" rx="1" />
       <rect x="13" y="13" width="7" height="6" rx="1" />
+      <circle cx="7.5" cy="8" r="1.4" fill="var(--clm-gold)" stroke="none" />
     </>
   ),
-  // Book: a ledger.
+  // Book: a ledger with its ribbon.
   book: (
     <>
       <path d="M5 4h11a2 2 0 012 2v14H7a2 2 0 01-2-2z" />
       <path d="M9 9h7M9 13h5" opacity="0.5" />
+      <path d="M13.5 4v4.6l1.5-1.1 1.5 1.1V4" fill="var(--clm-gold)" stroke="none" />
     </>
   ),
-  // Calibration: two measured bars, compared.
+  // Calibration: two measured bars; the marks carry the accent.
   calibration: (
     <>
       <path d="M4 8h11M4 16h11" />
-      <path d="M19 5.5v5M15 13.5v5" />
+      <path d="M19 5.5v5M15 13.5v5" stroke="var(--clm-gold)" />
     </>
   ),
-  // Analyst: the assistant mark, a conversation.
+  // Analyst: the assistant mark, a conversation with a live word in it.
   analyst: (
     <>
       <path d="M20 12a7 7 0 01-7 7H8l-4 3v-5a7 7 0 017-9h2a7 7 0 017 4z" />
+      <circle cx="11.5" cy="12.5" r="1.4" fill="var(--clm-gold)" stroke="none" />
     </>
   ),
-  // Orchestrator: a prompt, because it runs the machine.
+  // Orchestrator: a prompt with a live cursor.
   orchestrator: (
     <>
       <path d="M4 7l5 5-5 5" />
-      <path d="M12 17h8" />
+      <rect x="12" y="15.7" width="8" height="2.6" rx="1.3" fill="var(--clm-gold)" stroke="none" />
     </>
   ),
-  // Browser: a window with a chrome bar.
+  // Browser: a window, the address dot live.
   browser: (
     <>
       <rect x="3" y="5" width="18" height="14" rx="2" />
       <path d="M3 9h18" />
+      <circle cx="6" cy="7" r="1.1" fill="var(--clm-gold)" stroke="none" />
     </>
   ),
 }

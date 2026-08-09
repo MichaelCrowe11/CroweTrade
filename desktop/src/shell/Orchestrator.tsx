@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { motion } from "motion/react"
 import { usePanels, type PanelType, PANEL_LABELS } from "./panels.js"
 import { AIAvatarSwirl, type SwirlState } from "./AIAvatarSwirl.js"
-import { segmentInline } from "./markdown.js"
+import { AnswerBody } from "./AnswerText.js"
 import { DURATIONS, EASINGS, MAGNITUDES } from "./motion.js"
 
 /**
@@ -22,24 +22,6 @@ interface OrchTurn {
   role: "you" | "orchestrator"
   text: string
   pending?: boolean
-}
-
-function AnswerText({ text }: { text: string }) {
-  return (
-    <>
-      {segmentInline(text).map((seg, i) =>
-        seg.kind === "strong" ? (
-          <strong key={i}>{seg.text}</strong>
-        ) : seg.kind === "code" ? (
-          <code key={i} className="mono turn__code">
-            {seg.text}
-          </code>
-        ) : (
-          <span key={i}>{seg.text}</span>
-        ),
-      )}
-    </>
-  )
 }
 
 export function Orchestrator({ onCollapse }: { onCollapse: () => void }) {
@@ -164,14 +146,14 @@ export function Orchestrator({ onCollapse }: { onCollapse: () => void }) {
           )}
           {turns.map((t, i) => (
             <div key={i} className={`turn turn--${t.role === "you" ? "you" : "analyst"}`}>
-              <span className="turn__who mono">
+              <span className={`turn__who mono${t.pending ? " turn__who--working" : ""}`}>
                 {t.role === "orchestrator" && (
                   <AIAvatarSwirl state={t.pending ? swirlState : "idle"} size={18} storm="active" />
                 )}
-                {t.role === "you" ? "YOU" : "ORCHESTRATOR"}
+                <span className="turn__whoname">{t.role === "you" ? "YOU" : "ORCHESTRATOR"}</span>
               </span>
               <p className="turn__text">
-                <AnswerText text={t.pending ? live : t.text} />
+                <AnswerBody text={t.pending ? live : t.text} />
                 {t.pending && (
                   <motion.span
                     className="turn__caret"

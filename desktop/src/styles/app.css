@@ -1097,6 +1097,11 @@ body {
 }
 .turn--you .turn__who { color: var(--clm-gold-deep); }
 
+/* While the swirl works, its storm orbits over where the label sits; the
+ * label yields until the answer lands. The storm IS the label then. */
+.turn__whoname { transition: opacity var(--clm-dur-slow) var(--clm-ease); }
+.turn__who--working .turn__whoname { opacity: 0; }
+
 /* Live engine reads, painted the moment they happen: grounding shown in real
  * time, not disclosed after the fact. */
 .turn__read { display: inline-block; margin-right: 10px; color: var(--clm-blue); }
@@ -1104,6 +1109,26 @@ body {
 .turn__caret { color: var(--clm-gold); font-weight: 600; }
 
 .turn__text strong { font-weight: 650; color: var(--clm-ink); }
+
+/* The lede: both assistants are told to lead with the verdict, and the type
+ * says so. Editorial face, one step up, before the working prose. */
+.turn__lede {
+  display: block;
+  margin: 0 0 9px;
+  font-family: var(--clm-font-display);
+  font-size: var(--clm-fs-body);
+  font-weight: 560;
+  line-height: 1.5;
+  color: var(--clm-ink);
+}
+
+/* Figures in prose are readouts: tabular mono, a breath brighter than the
+ * sentence around them. Neutral ink on purpose; direction color belongs to
+ * live readouts, not to numbers a model quotes. */
+.turn__num {
+  font-size: 0.94em;
+  color: color-mix(in srgb, var(--clm-ink) 88%, var(--clm-gold-soft));
+}
 
 .turn__code {
   padding: 1px 5px;

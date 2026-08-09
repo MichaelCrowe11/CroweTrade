@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react"
 import { motion } from "motion/react"
 import { DURATIONS, EASINGS, MAGNITUDES } from "./motion.js"
 import { AIAvatarSwirl, type SwirlState } from "./AIAvatarSwirl.js"
-import { segmentInline } from "./markdown.js"
+import { AnswerBody } from "./AnswerText.js"
 
 /**
  * The Analyst: ask the system about itself, in the same window as the book.
@@ -69,25 +69,6 @@ function useTypewriter(target: string): string {
 /** "crowetrade_engine_read_getPositions" reads as "getPositions" on screen. */
 function toolLabel(name: string): string {
   return name.replace(/^crowetrade_engine_read_/, "")
-}
-
-/** The Analyst's inline markdown subset, rendered; unclosed markers stay literal. */
-function AnswerText({ text }: { text: string }) {
-  return (
-    <>
-      {segmentInline(text).map((seg, i) =>
-        seg.kind === "strong" ? (
-          <strong key={i}>{seg.text}</strong>
-        ) : seg.kind === "code" ? (
-          <code key={i} className="mono turn__code">
-            {seg.text}
-          </code>
-        ) : (
-          <span key={i}>{seg.text}</span>
-        ),
-      )}
-    </>
-  )
 }
 
 export function AnalystPanel({ mint }: { mint?: string | null }) {
@@ -186,11 +167,11 @@ export function AnalystPanel({ mint }: { mint?: string | null }) {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: DURATIONS.quick, ease: EASINGS.snap }}
           >
-            <span className="turn__who mono">
+            <span className={`turn__who mono${t.pending ? " turn__who--working" : ""}`}>
               {t.role === "analyst" && (
                 <AIAvatarSwirl state={t.pending ? swirlState : "idle"} size={20} storm="active" />
               )}
-              {t.role === "you" ? "YOU" : "ANALYST"}
+              <span className="turn__whoname">{t.role === "you" ? "YOU" : "ANALYST"}</span>
             </span>
 
             {t.pending ? (
@@ -211,7 +192,7 @@ export function AnalystPanel({ mint }: { mint?: string | null }) {
                   </span>
                 ) : (
                   <p className="turn__text">
-                    <AnswerText text={shown} />
+                    <AnswerBody text={shown} />
                     <motion.span
                       className="turn__caret"
                       animate={{ opacity: [1, 0.2, 1] }}
@@ -234,7 +215,7 @@ export function AnalystPanel({ mint }: { mint?: string | null }) {
                   </span>
                 )}
                 <p className="turn__text">
-                  <AnswerText text={t.text} />
+                  <AnswerBody text={t.text} />
                 </p>
               </>
             )}
