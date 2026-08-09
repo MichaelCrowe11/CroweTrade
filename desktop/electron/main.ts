@@ -45,7 +45,14 @@ async function askAnalyst(
 ): Promise<{ text: string; consulted: string[] }> {
   const token = await azToken()
 
-  const root = path.join(__dirname, "../../analyst")
+  // The analyst's instructions and OpenAPI spec live at the repo root in
+  // dev; packaged builds carry them as extraResources beside the asar.
+  // Second member of the nb_runner packaging bug class: anything a spawn or
+  // readFileSync touches must be an extraResource, and this one hid outside
+  // desktop/ where the packaging sweep did not look.
+  const root = app.isPackaged
+    ? path.join(process.resourcesPath, "analyst")
+    : path.join(__dirname, "../../analyst")
   const res = await fetch(`${FOUNDRY}/openai/v1/responses`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
