@@ -265,10 +265,17 @@ export default function App() {
   const gates = useMemo(() => (active ? evaluateGates(active.snapshot) : []), [active])
   const verdict = useMemo(() => (active ? safeVerdict(gates) : null), [active, gates])
 
-  const flagFor = useCallback((c: Candidate): Verdict => {
-    const v = safeVerdict(evaluateGates(c.snapshot))
-    return v.kind === "ok" ? v.verdict : "insufficient-data"
-  }, [])
+  // Gate verdicts per candidate, computed when the feed changes, NOT on the
+  // one-second clock: 40 candidates times a full gate evaluation per second
+  // was pure waste for values that only move when a scan lands.
+  const flags = useMemo(() => {
+    const m = new Map<string, Verdict>()
+    for (const c of candidates) {
+      const v = safeVerdict(evaluateGates(c.snapshot))
+      m.set(c.mint, v.kind === "ok" ? v.verdict : "insufficient-data")
+    }
+    return m
+  }, [candidates])
 
   // Panel renderers. Each is a self-contained readout so the workspace can
   // place it anywhere without any of them knowing where they sit.
@@ -294,7 +301,10 @@ export default function App() {
                 {c.changeH1.toFixed(1)}%
               </span>
             )}
-            <span className={`scan__flag scan__flag--${flagFor(c)}`} aria-hidden="true" />
+            <span
+              className={`scan__flag scan__flag--${flags.get(c.mint) ?? "insufficient-data"}`}
+              aria-hidden="true"
+            />
             <Spark points={trace.get(c.mint) ?? []} up={chUp} />
             <span className="scan__age mono">
               {age(c.createdAt, now)} / {usd(c.liquidityUsd)}

@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process"
 import { createSseParser } from "./sse"
+import { azToken } from "./token"
 import { runCommand, runPython, stopExec, type Emit as ExecEmit } from "./exec"
 import { saveWorkflow, listWorkflows, runWorkflow } from "./workflows"
 
@@ -253,11 +253,7 @@ async function streamRound(
 
 export async function runOrchestrator(goal: string, emit: Emit): Promise<{ text: string }> {
   stopped = false
-  const token = execFileSync(
-    "az",
-    ["account", "get-access-token", "--resource", "https://ai.azure.com", "--query", "accessToken", "-o", "tsv"],
-    { encoding: "utf8" },
-  ).trim()
+  const token = await azToken()
 
   let input: unknown = goal
   let previousId: string | null = null

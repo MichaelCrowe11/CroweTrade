@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 /**
  * AIAvatarSwirl, the assistant identity mark, ported from the Crowe Logic AI
@@ -9,30 +9,29 @@ import { useEffect, useState } from "react"
  *
  * - The center is a DRAWN spiral rather than the web app's raster avatar,
  *   because this terminal's icon language is stroked vector (see Rail.tsx)
- *   and a trading surface ships no photograph of anyone.
+ *   and a trading surface ships nobody's photograph.
  * - The token pools speak this product's vocabulary: quotes, gates, mints,
  *   verdicts, cohorts. The swirl thinks in the words the engine thinks in.
  * - Every color derives from the --clm ladder. Gold only: the swirl is brand
  *   and safety, never direction.
  *
- * Three states: idle (ambient drift), thinking (the Analyst is reading the
- * ledger, storm tightens and quickens), responding (tokens settle as text
- * streams out). Reduced motion collapses everything to a calm static ring.
+ * PERFORMANCE: the storm animates by writing transform and opacity straight
+ * onto the particle elements inside the rAF loop, never through React state.
+ * The original re-rendered the component per frame per instance, which is a
+ * real cost on an always-open terminal; the physics are unchanged, only the
+ * write path moved. Chromium stops firing rAF in hidden documents, so a
+ * backgrounded window pays nothing. Reduced motion collapses everything to a
+ * calm static ring.
  */
 
 export type SwirlState = "idle" | "thinking" | "responding"
 
-interface StormParticle {
-  id: number
+interface Particle {
   token: string
-  x: number
-  y: number
   color: string
   speed: number
   angle: number
   radius: number
-  opacity: number
-  scale: number
 }
 
 const IDLE_TOKENS = ["◦", "◉", "⊙", "◌", "tick", "scan"]
@@ -131,70 +130,89 @@ export function AIAvatarSwirl({
    */
   storm?: "always" | "active"
 }) {
-  const [particles, setParticles] = useState<StormParticle[]>([])
-  const [markOpacity, setMarkOpacity] = useState(1)
   const reduced = useReducedMotion()
   const stormy = storm === "always" || state !== "idle"
+
+  /* Display list: React renders the spans once per (state, size) change;
+   * physics and per-frame writes live entirely in refs. */
+  const [display, setDisplay] = useState<{ token: string; color: string }[]>([])
+  const physicsRef = useRef<Particle[]>([])
+  const spanRefs = useRef<(HTMLSpanElement | null)[]>([])
+  const markRef = useRef<HTMLDivElement>(null)
+  const markOpacityRef = useRef(1)
 
   const auraSpin = state === "thinking" ? 5 : state === "responding" ? 8 : 14
   const ringSpin = state === "thinking" ? 8 : state === "responding" ? 12 : 20
   const auraOpacity = state === "thinking" ? 0.7 : state === "responding" ? 0.55 : 0.32
 
+  /* Breathe: a few writes per couple of seconds, straight to the mark. */
   useEffect(() => {
-    if (reduced) {
-      setMarkOpacity(1)
+    const setMark = (v: number) => {
+      markOpacityRef.current = v
+      if (markRef.current) markRef.current.style.opacity = String(v)
+    }
+    if (reduced || state === "idle") {
+      setMark(1)
       return
     }
-    if (state === "thinking" || state === "responding") {
-      const breathe = setInterval(
-        () => {
-          setMarkOpacity(0.72)
-          setTimeout(() => setMarkOpacity(1), 260)
-          setTimeout(() => setMarkOpacity(0.86), 560)
-          setTimeout(() => setMarkOpacity(1), 900)
-        },
-        state === "thinking" ? 2000 : 2800,
-      )
-      return () => clearInterval(breathe)
+    const breathe = setInterval(
+      () => {
+        setMark(0.72)
+        setTimeout(() => setMark(1), 260)
+        setTimeout(() => setMark(0.86), 560)
+        setTimeout(() => setMark(1), 900)
+      },
+      state === "thinking" ? 2000 : 2800,
+    )
+    return () => {
+      clearInterval(breathe)
+      setMark(1)
     }
-    setMarkOpacity(1)
-    return
   }, [state, reduced])
 
+  /* Seed the storm: build physics into refs, render spans once. */
   useEffect(() => {
     if (!stormy) {
-      setParticles([])
+      physicsRef.current = []
+      setDisplay([])
       return
     }
     const count = state === "thinking" ? 14 : state === "responding" ? 10 : 7
     const pool =
       state === "thinking" ? THINKING_TOKENS : state === "responding" ? RESPONDING_TOKENS : IDLE_TOKENS
 
-    setParticles(
-      Array.from({ length: count }, (_, i) => {
-        const angle = (i / count) * Math.PI * 2
-        const radius = size * 0.72 + Math.random() * (size * 0.34)
-        return {
-          id: i,
-          token: pool[(i + Math.floor(Math.random() * pool.length)) % pool.length] ?? "◦",
-          x: reduced ? Math.cos(angle) * radius : 0,
-          y: reduced ? Math.sin(angle) * radius : 0,
-          color: STORM_COLORS[i % STORM_COLORS.length] ?? "var(--clm-gold)",
-          speed:
-            state === "thinking"
-              ? 1 + Math.random() * 1.5
-              : state === "responding"
-                ? 0.45 + Math.random() * 0.85
-                : 0.25 + Math.random() * 0.4,
-          angle,
-          radius,
-          opacity: reduced ? 0.5 : 1,
-          scale: 1,
-        }
-      }),
-    )
+    physicsRef.current = Array.from({ length: count }, (_, i) => {
+      const angle = (i / count) * Math.PI * 2
+      return {
+        token: pool[(i + Math.floor(Math.random() * pool.length)) % pool.length] ?? "◦",
+        color: STORM_COLORS[i % STORM_COLORS.length] ?? "var(--clm-gold)",
+        speed:
+          state === "thinking"
+            ? 1 + Math.random() * 1.5
+            : state === "responding"
+              ? 0.45 + Math.random() * 0.85
+              : 0.25 + Math.random() * 0.4,
+        angle,
+        radius: size * 0.72 + Math.random() * (size * 0.34),
+      }
+    })
+    spanRefs.current = []
+    setDisplay(physicsRef.current.map((p) => ({ token: p.token, color: p.color })))
+
+    /* Reduced motion: place the ring once, statically, and stop. */
+    if (reduced) {
+      queueMicrotask(() => {
+        physicsRef.current.forEach((p, i) => {
+          const el = spanRefs.current[i]
+          if (!el) return
+          el.style.transform = `translate(${Math.cos(p.angle) * p.radius}px, ${Math.sin(p.angle) * p.radius}px)`
+          el.style.opacity = "0.5"
+        })
+      })
+    }
   }, [size, state, reduced, stormy])
 
+  /* The loop: physics unchanged from the ported original, write path direct. */
   useEffect(() => {
     if (reduced || !stormy) return
     let frame = 0
@@ -202,41 +220,44 @@ export function AIAvatarSwirl({
 
     const animate = () => {
       time += state === "thinking" ? 0.03 : state === "responding" ? 0.023 : 0.015
-      setParticles((prev) =>
-        prev.map((p) => {
-          const angle = p.angle + p.speed * 0.015
-          let radius = p.radius
-          let opacity = p.opacity
-          let scale = 1
-          let x = 0
-          let y = 0
+      const mark = markOpacityRef.current
 
-          if (state === "thinking") {
-            const drift =
-              Math.sin(time * 2 + p.id) * (size * 0.2) + Math.cos(time * 1.45 + p.id * 0.3) * (size * 0.14)
-            radius = p.radius + Math.sin(time * 2.35 + p.id) * (size * 0.18)
-            opacity = 0.58 + Math.sin(time * 3 + p.id) * 0.35
-            scale = 0.8 + Math.sin(time * 2.2 + p.id) * 0.28
-            x = Math.cos(angle) * (radius + drift)
-            y = Math.sin(angle) * (radius + drift)
-          } else if (state === "responding") {
-            const pull = 0.72 + Math.sin(time * 1.55 + p.id * 0.45) * 0.16
-            radius = p.radius * pull
-            opacity = 0.55 + Math.sin(time * 1.9 + p.id) * 0.22
-            scale = 0.82 + Math.sin(time * 2.1 + p.id) * 0.18
-            x = Math.cos(angle) * (radius * 0.8)
-            y = Math.sin(angle) * (radius * 0.62)
-          } else {
-            const drift = Math.sin(time * 1.4 + p.id) * (size * 0.1)
-            opacity = 0.42 + Math.sin(time + p.id) * 0.24
-            scale = 0.92 + Math.sin(time * 1.35 + p.id) * 0.12
-            x = Math.cos(angle) * (p.radius + drift)
-            y = Math.sin(angle) * (p.radius + drift)
-          }
+      physicsRef.current.forEach((p, i) => {
+        const el = spanRefs.current[i]
+        if (!el) return
+        p.angle += p.speed * 0.015
+        let radius = p.radius
+        let opacity: number
+        let scale: number
+        let x: number
+        let y: number
 
-          return { ...p, angle, radius, opacity, scale, x, y }
-        }),
-      )
+        if (state === "thinking") {
+          const drift =
+            Math.sin(time * 2 + i) * (size * 0.2) + Math.cos(time * 1.45 + i * 0.3) * (size * 0.14)
+          radius = p.radius + Math.sin(time * 2.35 + i) * (size * 0.18)
+          opacity = 0.58 + Math.sin(time * 3 + i) * 0.35
+          scale = 0.8 + Math.sin(time * 2.2 + i) * 0.28
+          x = Math.cos(p.angle) * (radius + drift)
+          y = Math.sin(p.angle) * (radius + drift)
+        } else if (state === "responding") {
+          const pull = 0.72 + Math.sin(time * 1.55 + i * 0.45) * 0.16
+          radius = p.radius * pull
+          opacity = 0.55 + Math.sin(time * 1.9 + i) * 0.22
+          scale = 0.82 + Math.sin(time * 2.1 + i) * 0.18
+          x = Math.cos(p.angle) * (radius * 0.8)
+          y = Math.sin(p.angle) * (radius * 0.62)
+        } else {
+          const drift = Math.sin(time * 1.4 + i) * (size * 0.1)
+          opacity = 0.42 + Math.sin(time + i) * 0.24
+          scale = 0.92 + Math.sin(time * 1.35 + i) * 0.12
+          x = Math.cos(p.angle) * (p.radius + drift)
+          y = Math.sin(p.angle) * (p.radius + drift)
+        }
+
+        el.style.transform = `translate(${x}px, ${y}px) scale(${scale})`
+        el.style.opacity = String(Math.max(0, opacity * mark))
+      })
       frame = requestAnimationFrame(animate)
     }
 
@@ -263,14 +284,16 @@ export function AIAvatarSwirl({
         }}
       />
       <div className="swirl__storm">
-        {particles.map((p) => (
+        {display.map((p, i) => (
           <span
-            key={p.id}
+            key={i}
+            ref={(el) => {
+              spanRefs.current[i] = el
+            }}
             className="swirl__tok mono"
             style={{
-              transform: `translate(${p.x}px, ${p.y}px) scale(${p.scale})`,
               color: p.color,
-              opacity: p.opacity * markOpacity,
+              opacity: 0,
               fontSize: p.token.length > 3 ? "8px" : "9px",
             }}
           >
@@ -279,11 +302,9 @@ export function AIAvatarSwirl({
         ))}
       </div>
       <div
+        ref={markRef}
         className="swirl__mark"
-        style={{
-          transform: state === "thinking" ? "scale(1.03)" : "scale(1)",
-          opacity: markOpacity,
-        }}
+        style={{ transform: state === "thinking" ? "scale(1.03)" : "scale(1)" }}
       >
         <SpiralMark size={size} />
       </div>

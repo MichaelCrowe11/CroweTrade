@@ -54,7 +54,10 @@ function run(cmd: string, args: string[], cwd: string, emit: Emit): Promise<stri
       clearTimeout(timer)
       currentChild = null
       emit({ kind: "term", text: `[exit ${code ?? "killed"}]\n` })
-      resolve(`exit ${code ?? "killed"}\n${out.slice(-4000)}`)
+      // 8K of tail: enough that a jq-sized JSON block survives whole. The
+      // 4K cap forced a model to rerun a command just to see a field it had
+      // already fetched.
+      resolve(`exit ${code ?? "killed"}\n${out.slice(-8000)}`)
     })
   })
 }

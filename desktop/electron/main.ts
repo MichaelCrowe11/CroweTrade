@@ -1,7 +1,7 @@
 import { app, BrowserWindow, WebContentsView, ipcMain, session, shell } from "electron"
-import { execFileSync } from "node:child_process"
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { azToken } from "./token"
 import { createSseParser } from "./sse"
 import { runOrchestrator, stopOrchestrator } from "./orchestrator"
 import { listWorkflows, deleteWorkflow, runWorkflow } from "./workflows"
@@ -43,11 +43,7 @@ async function askAnalyst(
   onDelta: (text: string) => void,
   onTool: (name: string) => void,
 ): Promise<{ text: string; consulted: string[] }> {
-  const token = execFileSync(
-    "az",
-    ["account", "get-access-token", "--resource", "https://ai.azure.com", "--query", "accessToken", "-o", "tsv"],
-    { encoding: "utf8" },
-  ).trim()
+  const token = await azToken()
 
   const root = path.join(__dirname, "../../analyst")
   const res = await fetch(`${FOUNDRY}/openai/v1/responses`, {

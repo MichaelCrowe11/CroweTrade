@@ -1016,7 +1016,9 @@ body {
   font-weight: 800;
   letter-spacing: -0.02em;
   text-shadow: 0 0 8px currentColor, 0 0 16px currentColor;
-  transition: opacity var(--clm-dur) var(--clm-ease);
+  will-change: transform, opacity;
+  /* No transition: the storm writes transform and opacity per frame, and a
+   * transition would smear every write into the next. */
 }
 
 .swirl__mark {
