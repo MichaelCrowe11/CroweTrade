@@ -20,14 +20,27 @@
  *    Accuracy alone can look fine while the probabilities are meaningless.
  */
 
-/** Feature vector, ordered. Order is part of the contract with the weights. */
+/**
+ * Feature vector, ordered. Order is part of the contract with the weights.
+ *
+ * Position 5 was originally named "ageMinutes" while the extractor fed it the
+ * TICK COUNT — the first fit's dominant weight was reported under a name that
+ * described a feature it never saw. The name now says what arrives. liqKnown
+ * exists because liquidity is sometimes unmeasured (probe-priced ticks carry
+ * price but no depth), and encoding unknown as $0 would teach the model that
+ * "we didn't look" means "empty pool". isLaunchpad is explicit so the fit can
+ * show whether anything else adds signal beyond which feed a token came from —
+ * the confound the first fit was riding.
+ */
 export const FEATURE_NAMES = [
   "netFlowShare",
   "flowAccel",
   "priceProgressPct",
   "liqTrendPct",
-  "ageMinutes",
+  "ticksObserved",
   "logLiquidityUsd",
+  "liqKnown",
+  "isLaunchpad",
 ] as const
 
 export interface TrainingRow {

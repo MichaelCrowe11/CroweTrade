@@ -1079,38 +1079,51 @@ export class Ledger extends DurableObject<Env> {
     const sql = this.sql()
     const positions = sql.exec<{
       mint: string; entry_price: number; size_usd: number
-      opened_at: number; closed_at: number; token_amount: number
+      opened_at: number; origin: string | null
     }>(
-      `SELECT mint, entry_price, size_usd, opened_at, closed_at, token_amount
-       FROM positions WHERE closed_at IS NOT NULL AND priced_by = 'quote'`,
+      `SELECT p.mint, p.entry_price, p.size_usd, p.opened_at,
+              (SELECT MIN(d.origin) FROM decisions d WHERE d.mint = p.mint) AS origin
+       FROM positions p WHERE p.closed_at IS NOT NULL AND p.priced_by = 'quote'`,
     ).toArray()
 
-    const grid = [
-      { tp: 40, sl: 25 }, { tp: 40, sl: 35 },
-      { tp: 60, sl: 25 }, { tp: 60, sl: 35 },
-      { tp: 80, sl: 35 }, { tp: 120, sl: 35 },
+    // Every rule replays the SAME fixed horizon from entry — the shipped
+    // policy's 30-minute time stop — regardless of when the real position
+    // closed. The earlier version replayed only [opened_at, closed_at], so a
+    // position the live stop closed at minute 3 could never answer "what if we
+    // had held", which is the exact question the realized record raises:
+    // launchpad stops all lost while launchpad time-stops averaged +35.8%.
+    // null tp = no target; null sl = no stop; both null = pure time exit.
+    const HOLD_MS = 30 * 60_000
+    const grid: { tp: number | null; sl: number | null }[] = [
+      { tp: 120, sl: 35 }, // shipped policy, the baseline
+      { tp: 120, sl: 50 },
+      { tp: 120, sl: 70 },
+      { tp: 120, sl: null },
+      { tp: null, sl: 35 },
+      { tp: null, sl: null },
     ]
 
     const results = grid.map((g) => {
       let pnl = 0, wins = 0, counted = 0, tpHits = 0, slHits = 0, expiries = 0
+      const byOrigin = new Map<string, { counted: number; pnl: number }>()
       for (const p of positions) {
         const ticks = sql.exec<{ price: number | null }>(
           "SELECT price FROM ticks WHERE mint = ? AND at >= ? AND at <= ? ORDER BY at ASC",
-          p.mint, p.opened_at, p.closed_at,
+          p.mint, p.opened_at, p.opened_at + HOLD_MS,
         ).toArray()
         if (ticks.length === 0 || p.entry_price <= 0) continue
         counted += 1
 
-        const upper = p.entry_price * (1 + g.tp / 100)
-        const lower = p.entry_price * (1 - g.sl / 100)
+        const upper = g.tp === null ? null : p.entry_price * (1 + g.tp / 100)
+        const lower = g.sl === null ? null : p.entry_price * (1 - g.sl / 100)
         let retPct: number | null = null
         for (const t of ticks) {
           const px = t.price
           if (px === null) continue
           // Stop checked first: within a one-minute bar we cannot see order,
           // and assuming the favorable fill is how backtests lie.
-          if (px <= lower) { retPct = -g.sl; slHits += 1; break }
-          if (px >= upper) { retPct = g.tp; tpHits += 1; break }
+          if (lower !== null && px <= lower) { retPct = -(g.sl as number); slHits += 1; break }
+          if (upper !== null && px >= upper) { retPct = g.tp as number; tpHits += 1; break }
         }
         if (retPct === null) {
           const last = ticks[ticks.length - 1]?.price ?? p.entry_price
@@ -1120,17 +1133,25 @@ export class Ledger extends DurableObject<Env> {
         const trade = p.size_usd * (retPct / 100)
         pnl += trade
         if (trade > 0) wins += 1
+        const o = p.origin ?? "unknown"
+        const agg = byOrigin.get(o) ?? { counted: 0, pnl: 0 }
+        agg.counted += 1
+        agg.pnl += trade
+        byOrigin.set(o, agg)
       }
       return {
-        rule: `TP${g.tp}/SL${g.sl}`,
+        rule: `${g.tp === null ? "NOTP" : `TP${g.tp}`}/${g.sl === null ? "NOSL" : `SL${g.sl}`}`,
         counted, tpHits, slHits, expiries,
         pnlUsd: Number(pnl.toFixed(2)),
         winRate: counted > 0 ? Number((wins / counted).toFixed(3)) : null,
+        byOrigin: Object.fromEntries(
+          [...byOrigin].map(([o, a]) => [o, { counted: a.counted, pnlUsd: Number(a.pnl.toFixed(2)) }]),
+        ),
       }
     })
 
     return {
-      note: "Exit-rule counterfactual on real entries and our own observed ticks. Ignores exit impact, so these are upper bounds — rank rules against each other, do not read as achievable PnL.",
+      note: "Exit-rule counterfactual on real entries and our own observed ticks, fixed 30-minute horizon. Ignores exit impact, so these are upper bounds — rank rules against each other, do not read as achievable PnL.",
       positions: positions.length,
       results: results.sort((a, b) => b.pnlUsd - a.pnlUsd),
     }
@@ -1152,17 +1173,27 @@ export class Ledger extends DurableObject<Env> {
     const COST_HURDLE_PCT = 6
     const rows = this.sql().exec<{
       at: number; features: string; forward_ret_pct: number | null
-      price: number | null; origin: string | null
+      price: number | null; origin: string | null; liq_usd: number | null
     }>(
-      `SELECT d.at, d.features, d.forward_ret_pct, d.price, d.origin
+      // Liquidity was not captured on the feature snapshot, so it is joined
+      // back from our own ticks: the nearest MEASURED depth in the three
+      // minutes before the decision. Probe ticks carry null liquidity and do
+      // not qualify — a bounded window keeps stale depth from masquerading as
+      // decision-time depth. voided = 0 is defensive: today the quarantine
+      // also clears `labeled`, but this query must not depend on that.
+      `SELECT d.at, d.features, d.forward_ret_pct, d.price, d.origin,
+              (SELECT t.liquidity_usd FROM ticks t
+                WHERE t.mint = d.mint AND t.at <= d.at AND t.at >= d.at - 180000
+                  AND t.liquidity_usd IS NOT NULL
+                ORDER BY t.at DESC LIMIT 1) AS liq_usd
        FROM decisions d
-       WHERE d.labeled = 1 AND d.forward_ret_pct IS NOT NULL
+       WHERE d.labeled = 1 AND d.forward_ret_pct IS NOT NULL AND d.voided = 0
        ORDER BY d.at ASC`,
     ).toArray()
 
     const training = rows.map((r) => {
       const f = JSON.parse(r.features) as Record<string, number | null>
-      const liq = 0 // liquidity is not on the feature snapshot; see note below
+      const liqKnown = r.liq_usd !== null && r.liq_usd > 0 ? 1 : 0
       return {
         at: r.at,
         features: [
@@ -1171,7 +1202,9 @@ export class Ledger extends DurableObject<Env> {
           f["priceProgressPct"] ?? 0,
           f["liqTrendPct"] ?? 0,
           f["ticks"] ?? 0,
-          liq,
+          liqKnown ? Math.log10(1 + (r.liq_usd as number)) : 0,
+          liqKnown,
+          r.origin === "launchpad" ? 1 : 0,
         ],
         label: ((r.forward_ret_pct ?? 0) > COST_HURDLE_PCT ? 1 : 0) as 0 | 1,
       }

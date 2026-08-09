@@ -71,7 +71,14 @@ function toCandidate(c: PumpCoin, solUsd: number, now: number): Candidate | null
   const decimals = c.base_decimals ?? 6
   const supply = c.total_supply !== undefined ? c.total_supply / 10 ** decimals : undefined
   const mcap = c.usd_market_cap
-  const priceUsd = supply && supply > 0 && mcap ? mcap / supply : null
+  // Graduated coins get NO price from this listing. After graduation the pool
+  // sets the price and the listing's usd_market_cap lags it — measured live: a
+  // token that graduated within its first minute listed at an mcap ~2,470x
+  // below its pool price, and that first tick manufactured a +248,331%
+  // "return" that carried an entire counterfactual mean. Unknown is honest;
+  // the Jupiter probe rail prices what the curve math cannot.
+  const priceUsd =
+    !c.complete && supply && supply > 0 && mcap ? mcap / supply : null
 
   return {
     mint: c.mint,
