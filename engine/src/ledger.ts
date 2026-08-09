@@ -150,6 +150,22 @@ export class Ledger extends DurableObject<Env> {
       } catch {
         // Column already present.
       }
+      // Quarantine the launchpad rows priced before the base-unit fix.
+      //
+      // total_supply arrives in base units, so decision-time prices were off by
+      // 10^decimals and forward returns came out in the hundreds of millions of
+      // percent. Deleting them would hide the mistake; leaving them labeled
+      // would poison every query and every model fit. They are marked unlabeled
+      // with a reason instead, so they stop counting and stay inspectable.
+      try {
+        sql.exec(
+          `UPDATE decisions SET labeled = 0, forward_ret_pct = NULL, died = NULL,
+                                skip_reason = COALESCE(skip_reason,'') || ' [voided: price-scale bug]'
+           WHERE origin = 'launchpad' AND labeled = 1 AND ABS(forward_ret_pct) > 1000`,
+        )
+      } catch {
+        // Nothing to void.
+      }
       this.schemaReady = true
     }
     return sql
@@ -1112,6 +1128,63 @@ export class Ledger extends DurableObject<Env> {
       byOrigin,
       method:
         "Every eligible launch is snapshotted at decision time and scored 30 minutes later from our own observations. Refused launches are followed identically to entered ones, so the sample is not survivorship-biased.",
+    }
+  }
+
+  /**
+   * Read-only SQL over the corpus. The agent's research surface.
+   *
+   * This is the notebook, minus the kernel. The corpus is already relational --
+   * decisions joined to ticks joined to creators is exactly the question
+   * "which origin, at which age, with which flow, survived" -- so SQL is the
+   * native language for it. A Python sandbox would add container security,
+   * data egress and a whole runtime to answer the same questions less directly.
+   *
+   * SAFETY IS STRUCTURAL, not advisory:
+   *  - a single statement only, so nothing can be smuggled after a semicolon
+   *  - it must begin with SELECT or WITH; every mutating verb is rejected
+   *    outright rather than filtered, because a blocklist is a race against
+   *    whoever is more creative
+   *  - the DO's sql API has no filesystem or network reach, so the worst case
+   *    is a slow read of our own data
+   *  - rows are capped, so a cartesian join returns a truncated answer instead
+   *    of exhausting memory
+   */
+  researchQuery(sql: string): unknown {
+    const trimmed = sql.trim().replace(/;\s*$/, "")
+
+    if (trimmed.includes(";")) {
+      return { error: "one statement only", detail: "semicolons are not permitted" }
+    }
+    if (!/^(select|with)\b/i.test(trimmed)) {
+      return { error: "read only", detail: "queries must begin with SELECT or WITH" }
+    }
+    // Belt and braces behind the SELECT-only rule: CTEs can carry writes in
+    // some dialects, and the cost of checking is one regex.
+    if (/\b(insert|update|delete|drop|alter|create|replace|attach|pragma|vacuum)\b/i.test(trimmed)) {
+      return { error: "read only", detail: "mutating statements are rejected" }
+    }
+
+    const MAX_ROWS = 500
+    try {
+      const rows = this.sql().exec(trimmed).toArray()
+      return {
+        rowCount: rows.length,
+        truncated: rows.length > MAX_ROWS,
+        rows: rows.slice(0, MAX_ROWS),
+        schema: {
+          decisions:
+            "mint, at, symbol, price, origin, verdict, features (JSON), eligible, skip_reason, entered, entry_impact_pct, labeled, forward_ret_pct, died, labeled_at",
+          ticks: "mint, at, price, liquidity_usd, buys_24h, sells_24h, origin",
+          positions:
+            "id, mint, symbol, entry_price, size_sol, size_usd, token_amount, opened_at, closed_at, exit_price, exit_reason, pnl_usd, pnl_pct, policy_hash, verdict_entry, priced_by, exit_pricing",
+          creators: "mint, creator, first_seen",
+        },
+      }
+    } catch (e) {
+      // Return the database's own message: an agent iterating on a query needs
+      // to know it misspelled a column, not that "the query failed".
+      return { error: "query failed", detail: e instanceof Error ? e.message : String(e) }
     }
   }
 

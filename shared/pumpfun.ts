@@ -37,6 +37,7 @@ interface PumpCoin {
   real_sol_reserves?: number
   virtual_sol_reserves?: number
   total_supply?: number
+  base_decimals?: number
   usd_market_cap?: number
   pool_address?: string
   is_banned?: boolean
@@ -59,11 +60,17 @@ function curveLiquidityUsd(c: PumpCoin, solUsd: number): number | null {
 
 function toCandidate(c: PumpCoin, solUsd: number, now: number): Candidate | null {
   if (!c.mint || c.is_banned) return null
-  const supply = c.total_supply
+  // Price from market cap over supply, in WHOLE TOKENS.
+  //
+  // total_supply arrives in BASE UNITS. Dividing market cap by it directly
+  // yields a price per base unit -- off by 10^decimals, which for a six-decimal
+  // mint is a factor of a million. Later ticks price the same token correctly
+  // per whole token, so the ratio between them produced forward returns in the
+  // hundreds of millions of percent and corrupted 810 of 874 launchpad rows
+  // before the research tool surfaced it on its first query.
+  const decimals = c.base_decimals ?? 6
+  const supply = c.total_supply !== undefined ? c.total_supply / 10 ** decimals : undefined
   const mcap = c.usd_market_cap
-  // Price from market cap over supply. Absent either, we have no price, and a
-  // candidate without a price is not tradeable -- say so with null rather than
-  // inventing zero.
   const priceUsd = supply && supply > 0 && mcap ? mcap / supply : null
 
   return {

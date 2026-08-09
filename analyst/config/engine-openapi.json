@@ -97,6 +97,43 @@
           }
         }
       }
+    },
+    "/api/research": {
+      "post": {
+        "operationId": "runResearchQuery",
+        "summary": "Read-only SQL over the labeled corpus. THE research tool: use it to test hypotheses about what predicts survival, rather than guessing. Tables: decisions (mint, at, symbol, origin, verdict, features JSON, eligible, skip_reason, entered, entry_impact_pct, labeled, forward_ret_pct, died), ticks (mint, at, price, liquidity_usd, buys_24h, sells_24h, origin), positions (entry/exit/pnl/policy_hash/priced_by/exit_pricing), creators (mint, creator). SELECT or WITH only; one statement; 500 rows max. Always state the sample size alongside any finding.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sql": {
+                    "type": "string",
+                    "description": "A single read-only SELECT or WITH statement."
+                  }
+                },
+                "required": [
+                  "sql"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

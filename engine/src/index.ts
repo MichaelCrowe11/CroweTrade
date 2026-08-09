@@ -123,6 +123,15 @@ export default {
         return res
       }
 
+      // The agent's research surface: read-only SQL over the corpus. Admin
+      // token because an unbounded read of our own data is not something to
+      // hand to the open internet, even read-only.
+      if (url.pathname === "/api/research" && req.method === "POST") {
+        if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
+        const body = (await req.json().catch(() => ({}))) as { sql?: string }
+        if (!body.sql) return json({ error: "sql required" }, 400)
+        return json(await ledger(env).researchQuery(body.sql))
+      }
       if (url.pathname === "/api/train" && req.method === "GET") {
         return json(await ledger(env).trainModel())
       }
