@@ -145,7 +145,29 @@ body {
   min-height: 0;
 }
 
-.pane { min-height: 0; overflow-y: auto; }
+/* Scrollbars are always visible, not the macOS overlay default.
+ *
+ * An operator surface should never hide how much it is not showing. The
+ * overlay scrollbar appears on scroll and fades, so a list of 40 candidates
+ * looks identical to a list of 8 until you touch it, and "is there more below"
+ * becomes a question you have to ask the interface instead of read from it.
+ * Sized narrow and toned to the panel so it reads as an edge, not a control. */
+.pane {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.pane::-webkit-scrollbar { width: 10px; }
+.pane::-webkit-scrollbar-track { background: transparent; }
+.pane::-webkit-scrollbar-thumb {
+  background: var(--clm-line-strong);
+  border-radius: var(--clm-r-pill);
+  /* Border of the track colour insets the thumb so it reads as a hairline
+   * rather than a bar filling the gutter. */
+  border: 3px solid var(--clm-cream);
+}
+.pane::-webkit-scrollbar-thumb:hover { background: var(--clm-gold-deep); }
 .pane--scan { border-right: 1px solid var(--clm-line); }
 .pane--support { border-left: 1px solid var(--clm-line); }
 
