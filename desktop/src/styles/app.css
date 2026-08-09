@@ -566,6 +566,56 @@ body {
   color: var(--clm-muted);
 }
 
+/* ── Engine standing ─────────────────────────────────────────────────────────
+ * The single word that says whether the engine is acting and, when it is not,
+ * why. Follows the verdict block's language at support-panel volume. Color
+ * carries the axes: gold when the safety system is asserting itself (breaker,
+ * cap, slots), red for the kill switch and for a block with NO stated cause,
+ * blue for plain operation. An unexplained quiet engine must never wear the
+ * healthy color. */
+
+.standing {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--clm-line);
+  border-top-color: var(--clm-hair-top);
+  border-left: 3px solid var(--clm-line-strong);
+  border-radius: var(--clm-r-md);
+  background: var(--clm-raised);
+  box-shadow: var(--clm-z1);
+}
+
+.standing__word {
+  font-family: var(--clm-font-mono);
+  font-size: var(--clm-fs-head);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.standing__note { font-size: var(--clm-fs-cap); color: var(--clm-muted); line-height: 1.5; }
+.standing__clock { color: var(--clm-ink); }
+
+.standing--trading { border-left-color: var(--clm-blue); }
+.standing--trading .standing__word { color: var(--clm-blue); }
+.standing--breaker { border-left-color: var(--clm-gold); }
+.standing--breaker .standing__word { color: var(--clm-gold); }
+.standing--cap, .standing--slots { border-left-color: var(--clm-gold-deep); }
+.standing--cap .standing__word, .standing--slots .standing__word { color: var(--clm-gold-deep); }
+.standing--killed, .standing--paused { border-left-color: var(--clm-lamp-fail); }
+.standing--killed .standing__word, .standing--paused .standing__word { color: var(--clm-lamp-fail); }
+.standing--unreachable .standing__word { color: var(--clm-muted); }
+
+.exec__section {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--clm-line);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: var(--clm-muted);
+}
+
 /* ── Decisions feed ─────────────────────────────────────────────────────── */
 
 .decisions { display: flex; flex-direction: column; }
@@ -590,6 +640,13 @@ body {
 .decision--exit-win .decision__label { color: var(--clm-up); }
 .decision--exit-loss .decision__label { color: var(--clm-down); }
 .decision--skip .decision__label { color: var(--clm-muted); }
+/* A breaker line is the safety system speaking: gold, with the edge marked. */
+.decision--breaker { border-left-color: var(--clm-gold); }
+.decision--breaker .decision__label { color: var(--clm-gold); }
+/* Failures (scan errors, alert failures) are faults, not information. */
+.decision--fail { border-left-color: var(--clm-lamp-fail); }
+.decision--fail .decision__label { color: var(--clm-lamp-fail); }
+.decision--info .decision__label { color: var(--clm-blue); }
 
 .empty {
   padding: 48px 24px;
@@ -837,6 +894,105 @@ body {
 }
 .analyst__send:hover:not(:disabled) { background: var(--clm-accent-wash); }
 .analyst__send:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Calibration panel ───────────────────────────────────────────────────────
+ * The honest record of whether selection works. Its primary readout is the
+ * entered-versus-refused pair; the design job is to make those two numbers
+ * read as one comparison, so they share a baseline, a scale, and the gap
+ * stands between them where the eye travels anyway. Forward returns carry
+ * direction (green/red); a missing number is muted, never zero. */
+
+.calib { display: flex; flex-direction: column; gap: 22px; padding: 18px; }
+
+.calib__eyebrow {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: var(--clm-muted);
+}
+
+.calib__test {
+  padding: 18px 20px;
+  border: 1px solid var(--clm-line);
+  border-top-color: var(--clm-hair-top);
+  border-radius: var(--clm-r-lg);
+  background: var(--clm-panel);
+  box-shadow: var(--clm-z2);
+}
+
+.calib__pair {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.calib__side { display: flex; flex-direction: column; gap: 4px; }
+.calib__side--gap { text-align: center; }
+
+.calib__num { font-size: 26px; font-weight: 600; }
+.calib__num--gap { font-size: 20px; }
+.calib__num--up { color: var(--clm-up); }
+/* Quiet red: a losing forward return is information, not an alarm. */
+.calib__num--down { color: var(--clm-down-soft); }
+.calib__num--muted { color: var(--clm-muted); }
+
+.calib__key { font-size: 9px; letter-spacing: 0.2em; color: var(--clm-muted); }
+
+.calib__note {
+  margin: 12px 0 0;
+  font-size: var(--clm-fs-cap);
+  line-height: 1.6;
+  color: var(--clm-muted);
+  max-width: 52ch;
+}
+
+.calib__block { display: flex; flex-direction: column; }
+
+.origin {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--clm-line);
+}
+
+.origin__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.origin__name { font-size: 11px; letter-spacing: 0.14em; color: var(--clm-ink); }
+/* Quarantined rows are wreckage kept for forensics; they read as excluded,
+ * in the muted voice, and never join a sample size. */
+.origin__sample { font-size: var(--clm-fs-cap); color: var(--clm-muted); }
+
+.origin__stats { display: flex; gap: 18px; flex-wrap: wrap; font-size: 11px; }
+.origin__stat { display: flex; gap: 6px; align-items: baseline; }
+.origin__k { font-size: 9px; letter-spacing: 0.16em; color: var(--clm-muted); }
+
+.skip {
+  display: grid;
+  grid-template-columns: 92px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 5px 0;
+}
+
+.skip__reason { font-size: var(--clm-fs-sm); color: var(--clm-ink); }
+
+.skip__track {
+  height: 6px;
+  border-radius: var(--clm-radius);
+  background: var(--clm-panel);
+  overflow: hidden;
+}
+
+/* Skip bars are the gates' output, so they sit on the gold axis: refusals in
+ * the dim wash, the surviving "eligible" band lit. */
+.skip__fill { height: 100%; background: color-mix(in srgb, var(--clm-gold) 30%, transparent); }
+.skip__fill--eligible { background: var(--clm-gold); }
+
+.skip__count { font-size: 11px; color: var(--clm-muted); }
+
+.calib__ops { font-size: 10px; color: var(--clm-muted); }
 
 /* ── Analyst drawer ──────────────────────────────────────────────────────────
  * Docked between the rail and the workspace, Cortex's conversation-panel

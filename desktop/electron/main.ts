@@ -196,8 +196,21 @@ function createWindow(): void {
     },
   })
 
-  // Paint only once the renderer has something to show.
-  win.once("ready-to-show", () => win?.show())
+  // Paint only once the renderer has something to show. A shot run appears
+  // WITHOUT taking focus and lets every click fall through: these runs happen
+  // on a shared, actively-used desktop, and a window that eats a click meant
+  // for whatever is beneath it both disrupts the operator and mutates the
+  // seeded state it was launched to photograph. (Observed, not hypothetical:
+  // a stray click closed two seeded panels mid-shot.)
+  const isShotRun = Boolean(process.env["CROWETRADE_SHOT"])
+  win.once("ready-to-show", () => {
+    if (isShotRun) {
+      win?.setIgnoreMouseEvents(true)
+      win?.showInactive()
+    } else {
+      win?.show()
+    }
+  })
 
   // Dev self-capture: CROWETRADE_SHOT=/path/out.png makes the window write a
   // PNG of itself shortly after load, then carry on running. Exists because
@@ -208,15 +221,25 @@ function createWindow(): void {
   let shotSeeded = false
   if (shotPath) {
     win.webContents.on("did-finish-load", () => {
-      // Optional workspace seeding, dev-only like the shot itself: the
-      // persisted zustand envelope goes into localStorage verbatim and the
-      // page reloads once, so a screenshot can show a layout other than the
-      // default without anyone clicking.
+      // Optional state seeding, dev-only like the shot itself: the env var is
+      // a JSON object of localStorage key to value; each value is stored
+      // stringified and the page reloads once. One seed can carry the
+      // workspace layout AND an engine fixture, so states like an open
+      // breaker are photographable without waiting for the live engine.
       if (shotState && !shotSeeded) {
         shotSeeded = true
-        void win?.webContents.executeJavaScript(
-          `localStorage.setItem("crowetrade-panels", ${JSON.stringify(shotState)}); location.reload()`,
-        )
+        try {
+          const entries = Object.entries(JSON.parse(shotState) as Record<string, unknown>)
+          const js = entries
+            .map(
+              ([k, v]) =>
+                `localStorage.setItem(${JSON.stringify(k)}, ${JSON.stringify(JSON.stringify(v))});`,
+            )
+            .join("")
+          void win?.webContents.executeJavaScript(`${js}location.reload()`)
+        } catch (e) {
+          console.error("CROWETRADE_SHOT_STATE is not valid JSON:", e)
+        }
         return
       }
       setTimeout(() => {

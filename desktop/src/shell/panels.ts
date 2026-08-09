@@ -19,7 +19,7 @@ import { create } from "zustand"
 import { persist } from "zustand/middleware"
 import { migratePanelsV1, type StoredPanel } from "./migrate.js"
 
-export type PanelType = "scan" | "chart" | "gates" | "book" | "browser"
+export type PanelType = "scan" | "chart" | "gates" | "book" | "calibration" | "browser"
 
 export interface Panel {
   id: string
@@ -36,6 +36,7 @@ export const PANEL_LABELS: Record<PanelType, string> = {
   chart: "Chart",
   gates: "Gates",
   book: "Book",
+  calibration: "Calibration",
   browser: "Browser",
 }
 
@@ -51,6 +52,7 @@ const SINGLE_INSTANCE: ReadonlySet<PanelType> = new Set<PanelType>([
   "chart",
   "gates",
   "book",
+  "calibration",
 ])
 
 interface PanelsState {

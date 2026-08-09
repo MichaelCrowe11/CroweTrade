@@ -47,6 +47,13 @@ const ICONS: Record<RailKey, JSX.Element> = {
       <path d="M9 9h7M9 13h5" opacity="0.5" />
     </>
   ),
+  // Calibration: two measured bars, compared.
+  calibration: (
+    <>
+      <path d="M4 8h11M4 16h11" />
+      <path d="M19 5.5v5M15 13.5v5" />
+    </>
+  ),
   // Analyst: the assistant mark, a conversation.
   analyst: (
     <>
@@ -64,7 +71,7 @@ const ICONS: Record<RailKey, JSX.Element> = {
 
 const LABELS: Record<RailKey, string> = { ...PANEL_LABELS, analyst: "Analyst" }
 
-const ORDER: RailKey[] = ["scan", "chart", "gates", "book", "analyst", "browser"]
+const ORDER: RailKey[] = ["scan", "chart", "gates", "book", "calibration", "analyst", "browser"]
 
 export function Rail() {
   const panels = usePanels((s) => s.panels)

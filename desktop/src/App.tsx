@@ -13,6 +13,8 @@ import { AnalystPanel } from "./shell/AnalystPanel.js"
 import { BrowserPanel } from "./shell/BrowserPanel.js"
 import { usePanels, type Panel } from "./shell/panels.js"
 import { DURATIONS, EASINGS, MAGNITUDES } from "./shell/motion.js"
+import { describeEvent, type EngineEvent } from "./engine/events.js"
+import { standingOf, countdown, pct, gapPt } from "./engine/standing.js"
 
 const REFRESH_MS = 20_000
 const ENGINE = "https://crowetrade-engine.yellow-block-3adc.workers.dev"
@@ -27,46 +29,75 @@ interface EnginePosition {
   verdict_entry: string
 }
 
-interface EngineEvent {
-  at: number
-  kind: string
-  data: string
-}
-
+/**
+ * The read model of GET /api/positions. Everything beyond the original five
+ * fields is optional so an older engine, or a summary trimmed mid-deploy,
+ * degrades to the smaller readout instead of a crash. The additions exist so
+ * the terminal can explain a SILENT engine: a book that stopped trading must
+ * name its reason (breaker, cap, slots, kill), because this project has lost
+ * hours twice to declines that were recorded but never surfaced.
+ */
 interface EngineSummary {
+  mode?: string
   killed: boolean
+  policyHash?: string
   open: EnginePosition[]
-  stats: { closedCount: number; totalPnlUsd: number; winRate: number | null }
-  budget?: { spentTodaySol: number; dailyCapSol: number; canEnter: boolean }
+  stats: {
+    closedCount: number
+    totalPnlUsd: number
+    winRate: number | null
+    excludedModelPriced?: number
+  }
+  budget?: {
+    spentTodaySol: number
+    dailyCapSol: number
+    remainingSol?: number
+    openSlots?: number
+    canEnter: boolean
+    breaker?: { open: boolean; until: string | null }
+  }
+  byOrigin?: {
+    origin: string
+    decisions: number
+    voided: number
+    labeled: number
+    entered: number
+    deathRate: number | null
+    avgForwardRetEnteredPct: number | null
+    avgForwardRetRefusedPct: number | null
+  }[]
+  skipReasons?: { reason: string; count: number }[]
+  calibration?: {
+    decisions: number
+    labeled: number
+    oldestUnlabeledAgeMin: number | null
+    dueForLabel: number
+    deathRate: number | null
+    avgForwardRetEnteredPct: number | null
+    avgForwardRetEligibleSkippedPct: number | null
+  }
+  alert?: {
+    state: string
+    labeled: number
+    needed: number
+    configured: boolean
+    lastError: string | null
+  }
+  cohorts?: {
+    policyHash: string
+    current: boolean
+    closed: number
+    pnlUsd: number
+    winRate: number | null
+    unroutableExits: number
+  }[]
   events?: EngineEvent[]
 }
 
-/** One line per engine decision: what, who, and why when it declined. */
-function describeEvent(e: EngineEvent): { label: string; detail: string; kind: string } {
-  try {
-    const d = JSON.parse(e.data) as Record<string, unknown>
-    const sym = typeof d["symbol"] === "string" ? d["symbol"] : ""
-    switch (e.kind) {
-      case "entry":
-        return { kind: "entry", label: `ENTER ${sym}`, detail: `${String(d["verdict"])}` }
-      case "exit": {
-        const pnl = typeof d["pnlUsd"] === "number" ? d["pnlUsd"] : 0
-        return {
-          kind: pnl >= 0 ? "exit-win" : "exit-loss",
-          label: `EXIT ${sym}`,
-          detail: `${String(d["reason"])} ${pnl >= 0 ? "+" : "-"}$${Math.abs(pnl).toFixed(2)}`,
-        }
-      }
-      case "entry_skipped":
-        return { kind: "skip", label: `SKIP ${sym}`, detail: String(d["reason"] ?? "") }
-      case "kill":
-        return { kind: "skip", label: "KILL", detail: d["on"] ? "engaged" : "released" }
-      default:
-        return { kind: "skip", label: e.kind.toUpperCase(), detail: "" }
-    }
-  } catch {
-    return { kind: "skip", label: e.kind, detail: "" }
-  }
+/** Death rate as a plain unsigned percent; null is "--", never a zero. */
+function deathPct(rate: number | null | undefined): string {
+  if (rate === null || rate === undefined || !Number.isFinite(rate)) return "--"
+  return `${(rate * 100).toFixed(0)}%`
 }
 
 /** Verdict, or null when the combination policy has not been written yet. */
@@ -179,15 +210,36 @@ export default function App() {
         .then((d) => setEngine(d as EngineSummary | null))
         .catch(() => setEngine(null))
     }
-    pullEngine()
-    const engineTimer = setInterval(pullEngine, 30_000)
+    // Dev-only: the self-shot rail can seed an engine fixture so states like
+    // an open breaker are photographable without waiting for the live engine
+    // to be in them. A present fixture replaces polling for the session, and
+    // is CONSUMED on read: a leftover fixture surviving into the next real
+    // launch would pin a phantom breaker on screen forever, which is the
+    // exact quiet-vs-broken confusion this readout exists to prevent.
+    let engineTimer: ReturnType<typeof setInterval> | undefined
+    let fixture: EngineSummary | null = null
+    try {
+      const raw = localStorage.getItem("crowetrade-engine-fixture")
+      if (raw) {
+        localStorage.removeItem("crowetrade-engine-fixture")
+        fixture = JSON.parse(raw) as EngineSummary
+      }
+    } catch {
+      fixture = null
+    }
+    if (fixture) {
+      setEngine(fixture)
+    } else {
+      pullEngine()
+      engineTimer = setInterval(pullEngine, 30_000)
+    }
     // Ages are relative to wall clock, so they need their own tick or every row
     // would read the same age until the next feed poll landed.
     const clock = setInterval(() => setNow(Date.now()), 1_000)
     return () => {
       clearInterval(feed)
       clearInterval(clock)
-      clearInterval(engineTimer)
+      if (engineTimer) clearInterval(engineTimer)
       abortRef.current?.abort()
     }
   }, [load])
@@ -287,62 +339,317 @@ export default function App() {
     )
   }
 
-  const renderBook = () => (
-    <div className="exec">
-      <div className="exec__row">
-        <span className="exec__key">ENGINE</span>
-        <span className={`exec__value ${engine ? "exec__value--observe" : ""}`}>
-          {engine ? (engine.killed ? "KILLED" : "TRADING") : "unreachable"}
-        </span>
-      </div>
-      {engine && (
-        <>
-          <div className="exec__row">
-            <span className="exec__key">OPEN</span>
-            <span className="exec__value">{engine.open.length}</span>
-          </div>
-          <div className="exec__row">
-            <span className="exec__key">CLOSED</span>
-            <span className="exec__value">{engine.stats.closedCount}</span>
-          </div>
-          <div className="exec__row">
-            <span className="exec__key">WIN RATE</span>
-            <span className="exec__value">
-              {engine.stats.winRate === null ? "--" : `${Math.round(engine.stats.winRate * 100)}%`}
+  /**
+   * The book: engine standing first, because a quiet engine and a broken one
+   * must never look the same. When the engine declines to enter, the word at
+   * the top names why: the kill switch, the breaker (with a live countdown),
+   * the day cap, or full slots. An unexplained block renders as PAUSED in the
+   * alarm hue rather than as a healthy TRADING, on the principle that unknown
+   * never reads as pass.
+   */
+  const renderBook = () => {
+    const standing = engine ? standingOf(engine) : null
+    const current = engine?.cohorts?.find((c) => c.current) ?? null
+    return (
+      <div className="exec">
+        {!engine && (
+          <div className="standing standing--unreachable">
+            <span className="standing__word">UNREACHABLE</span>
+            <span className="standing__note">
+              the terminal observes markets on its own; the paper book returns when the engine does
             </span>
           </div>
-          <div className="exec__row">
-            <span className="exec__key">SIM PNL</span>
-            <span className={`exec__value ${engine.stats.totalPnlUsd >= 0 ? "exec__value--up" : "exec__value--down"}`}>
-              {`${engine.stats.totalPnlUsd >= 0 ? "+" : "-"}$${Math.abs(engine.stats.totalPnlUsd).toFixed(2)}`}
+        )}
+
+        {engine && standing && (
+          <div className={`standing standing--${standing.state}`}>
+            <span className="standing__word">
+              {standing.state === "killed" && "KILLED"}
+              {standing.state === "breaker" && "HOLDING"}
+              {standing.state === "cap" && "DAY CAP"}
+              {standing.state === "slots" && "SLOTS FULL"}
+              {standing.state === "paused" && "PAUSED"}
+              {standing.state === "trading" && "TRADING"}
+            </span>
+            <span className="standing__note">
+              {standing.state === "killed" && "kill switch engaged; exits continue, entries do not"}
+              {standing.state === "breaker" &&
+                (standing.untilMs !== null ? (
+                  <>
+                    circuit breaker open; entries resume in{" "}
+                    <span className="mono standing__clock">{countdown(standing.untilMs, now)}</span>
+                  </>
+                ) : (
+                  "circuit breaker open; no deadline reported"
+                ))}
+              {standing.state === "cap" &&
+                `daily budget spent: ${engine.budget?.spentTodaySol.toFixed(2)} of ${engine.budget?.dailyCapSol} SOL`}
+              {standing.state === "slots" && "every position slot is in use"}
+              {standing.state === "paused" && "entries blocked; the engine did not name a cause"}
+              {standing.state === "trading" &&
+                (engine.budget
+                  ? `${engine.budget.remainingSol?.toFixed(1) ?? "?"} SOL and ${engine.budget.openSlots ?? "?"} slots free`
+                  : "entries permitted")}
             </span>
           </div>
-          {engine.budget && (
+        )}
+
+        {engine && (
+          <>
             <div className="exec__row">
-              <span className="exec__key">DAY SPEND</span>
-              <span className="exec__value">
-                {engine.budget.spentTodaySol.toFixed(2)} / {engine.budget.dailyCapSol} SOL
+              <span className="exec__key">MODE</span>
+              <span className="exec__value exec__value--observe">
+                {(engine.mode ?? "unknown").toUpperCase()}
+                {engine.policyHash ? ` / ${engine.policyHash.slice(0, 8)}` : ""}
               </span>
             </div>
-          )}
-        </>
-      )}
-      {engine?.events && (
-        <div className="decisions">
-          {engine.events.slice(0, 14).map((e) => {
-            const v = describeEvent(e)
-            return (
-              <div key={`${e.at}-${v.label}`} className={`decision decision--${v.kind}`}>
-                <span className="decision__label mono">{v.label}</span>
-                <span className="decision__detail">{v.detail}</span>
-                <span className="decision__age mono">{age(e.at, now)}</span>
+            <div className="exec__row">
+              <span className="exec__key">OPEN</span>
+              <span className="exec__value">
+                {engine.open.length}
+                {engine.budget?.openSlots !== undefined ? ` / ${engine.budget.openSlots} slots free` : ""}
+              </span>
+            </div>
+            {engine.budget && (
+              <div className="exec__row">
+                <span className="exec__key">DAY SPEND</span>
+                <span className="exec__value">
+                  {engine.budget.spentTodaySol.toFixed(2)} / {engine.budget.dailyCapSol} SOL
+                </span>
               </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
+            )}
+
+            {/* The funding number is THIS policy's record. Lifetime spans every
+                policy version this engine ever ran, including ones whose bugs
+                are already fixed, so it lives in a footnote, never up here. */}
+            {current ? (
+              <>
+                <div className="exec__section mono">THIS POLICY</div>
+                <div className="exec__row">
+                  <span className="exec__key">CLOSED</span>
+                  <span className="exec__value">{current.closed}</span>
+                </div>
+                <div className="exec__row">
+                  <span className="exec__key">PNL</span>
+                  <span
+                    className={`exec__value ${current.pnlUsd >= 0 ? "exec__value--up" : "exec__value--down"}`}
+                  >
+                    {`${current.pnlUsd >= 0 ? "+" : "-"}$${Math.abs(current.pnlUsd).toFixed(2)}`}
+                  </span>
+                </div>
+                <div className="exec__row">
+                  <span className="exec__key">WIN RATE</span>
+                  <span className="exec__value">
+                    {current.winRate === null ? "--" : `${Math.round(current.winRate * 100)}%`}
+                  </span>
+                </div>
+                {current.unroutableExits > 0 && (
+                  <div className="exec__row">
+                    <span className="exec__key">UNROUTABLE</span>
+                    <span className="exec__value exec__value--down">{current.unroutableExits}</span>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="exec__row">
+                  <span className="exec__key">CLOSED</span>
+                  <span className="exec__value">{engine.stats.closedCount}</span>
+                </div>
+                <div className="exec__row">
+                  <span className="exec__key">WIN RATE</span>
+                  <span className="exec__value">
+                    {engine.stats.winRate === null
+                      ? "--"
+                      : `${Math.round(engine.stats.winRate * 100)}%`}
+                  </span>
+                </div>
+                <div className="exec__row">
+                  <span className="exec__key">SIM PNL</span>
+                  <span
+                    className={`exec__value ${engine.stats.totalPnlUsd >= 0 ? "exec__value--up" : "exec__value--down"}`}
+                  >
+                    {`${engine.stats.totalPnlUsd >= 0 ? "+" : "-"}$${Math.abs(engine.stats.totalPnlUsd).toFixed(2)}`}
+                  </span>
+                </div>
+              </>
+            )}
+
+            {engine.alert && (
+              <div className="exec__row">
+                <span className="exec__key">ALERT</span>
+                {!engine.alert.configured ? (
+                  <span className="exec__value exec__value--down">NOT CONFIGURED</span>
+                ) : engine.alert.lastError ? (
+                  <span className="exec__value exec__value--down">
+                    FAILED: {engine.alert.lastError}
+                  </span>
+                ) : (
+                  <span className="exec__value">
+                    {engine.alert.state === "sent"
+                      ? `sent, ${engine.alert.labeled} labeled`
+                      : `${engine.alert.state} ${engine.alert.labeled}/${engine.alert.needed} labeled`}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {current && (
+              <p className="exec__note">
+                Lifetime, {engine.cohorts?.length ?? 0} policies: {engine.stats.closedCount}{" "}
+                closes, {engine.stats.totalPnlUsd >= 0 ? "+" : "-"}$
+                {Math.abs(engine.stats.totalPnlUsd).toFixed(2)},{" "}
+                {engine.stats.winRate === null ? "--" : `${Math.round(engine.stats.winRate * 100)}%`}{" "}
+                win
+                {engine.stats.excludedModelPriced
+                  ? `; ${engine.stats.excludedModelPriced} model-priced closes excluded`
+                  : ""}
+                . Judge the current policy, not this line.
+              </p>
+            )}
+          </>
+        )}
+
+        {engine?.events && (
+          <div className="decisions">
+            {engine.events.slice(0, 14).map((e) => {
+              const v = describeEvent(e)
+              return (
+                <div key={`${e.at}-${v.label}`} className={`decision decision--${v.kind}`}>
+                  <span className="decision__label mono">{v.label}</span>
+                  <span className="decision__detail">{v.detail}</span>
+                  <span className="decision__age mono">{age(e.at, now)}</span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  /**
+   * Calibration: the honest record of whether selection works. The primary
+   * readout is entered-versus-refused forward returns, side by side with the
+   * gap between them, because two numbers that should diverge and do not is
+   * the most important thing this product currently knows about itself.
+   * Quarantined (voided) rows are shown as excluded and never enter a sample
+   * size; a missing return renders as "--", never as zero.
+   */
+  const renderCalibration = () => {
+    if (!engine) {
+      return <p className="empty">Engine unreachable. Calibration reads come from the live engine.</p>
+    }
+    const cal = engine.calibration
+    const origins = engine.byOrigin ?? []
+    const skips = engine.skipReasons ?? []
+    const maxSkip = Math.max(1, ...skips.map((s) => s.count))
+    const totalSkip = skips.reduce((n, s) => n + s.count, 0)
+    // Forward returns carry DIRECTION, so they read on the green/red axis;
+    // a missing number is muted, never colored and never zero.
+    const tone = (v: number | null | undefined) =>
+      v === null || v === undefined ? "calib__num--muted" : v >= 0 ? "calib__num--up" : "calib__num--down"
+    const gapValue =
+      cal &&
+      cal.avgForwardRetEnteredPct !== null &&
+      cal.avgForwardRetEligibleSkippedPct !== null
+        ? cal.avgForwardRetEnteredPct - cal.avgForwardRetEligibleSkippedPct
+        : null
+    return (
+      <div className="calib">
+        {cal && (
+          <div className="calib__test">
+            <span className="calib__eyebrow mono">SELECTION TEST</span>
+            <div className="calib__pair">
+              <div className="calib__side">
+                <span className={`calib__num mono ${tone(cal.avgForwardRetEnteredPct)}`}>
+                  {pct(cal.avgForwardRetEnteredPct)}
+                </span>
+                <span className="calib__key mono">ENTERED</span>
+              </div>
+              <div className="calib__side calib__side--gap">
+                <span className={`calib__num calib__num--gap mono ${tone(gapValue)}`}>
+                  {gapPt(cal.avgForwardRetEnteredPct, cal.avgForwardRetEligibleSkippedPct)}
+                </span>
+                <span className="calib__key mono">GAP</span>
+              </div>
+              <div className="calib__side">
+                <span className={`calib__num mono ${tone(cal.avgForwardRetEligibleSkippedPct)}`}>
+                  {pct(cal.avgForwardRetEligibleSkippedPct)}
+                </span>
+                <span className="calib__key mono">REFUSED</span>
+              </div>
+            </div>
+            <p className="calib__note">
+              30 minute forward return, {cal.labeled} labeled decisions. If selection works,
+              entered must beat refused. A gap near zero means the gates are not separating
+              winners from the universe they choose from.
+            </p>
+          </div>
+        )}
+
+        {origins.length > 0 && (
+          <div className="calib__block">
+            <span className="calib__eyebrow mono">BY ORIGIN</span>
+            {origins.map((o) => (
+              <div className="origin" key={o.origin}>
+                <div className="origin__head">
+                  <span className="origin__name mono">{o.origin.toUpperCase()}</span>
+                  <span className="origin__sample">
+                    {o.labeled} labeled of {o.decisions}
+                    {o.voided > 0 ? `, ${o.voided.toLocaleString()} quarantined excluded` : ""}
+                  </span>
+                </div>
+                <div className="origin__stats mono">
+                  <span className="origin__stat">
+                    <span className="origin__k">DEATH</span> {deathPct(o.deathRate)}
+                  </span>
+                  <span className="origin__stat">
+                    <span className="origin__k">ENTERED</span> {o.entered}
+                  </span>
+                  <span className="origin__stat">
+                    <span className="origin__k">ENT RET</span> {pct(o.avgForwardRetEnteredPct)}
+                  </span>
+                  <span className="origin__stat">
+                    <span className="origin__k">REF RET</span> {pct(o.avgForwardRetRefusedPct)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {skips.length > 0 && (
+          <div className="calib__block">
+            <span className="calib__eyebrow mono">DISCOVERY SKIPS</span>
+            {skips.map((s) => (
+              <div className="skip" key={s.reason}>
+                <span className="skip__reason">{s.reason}</span>
+                <div className="skip__track">
+                  <div
+                    className={`skip__fill ${s.reason === "eligible" ? "skip__fill--eligible" : ""}`}
+                    style={{ width: `${((s.count / maxSkip) * 100).toFixed(1)}%` }}
+                  />
+                </div>
+                <span className="skip__count mono">{s.count}</span>
+              </div>
+            ))}
+            <p className="calib__note">
+              {totalSkip.toLocaleString()} decisions in the current window. "eligible" is what
+              survived every gate; everything else names the gate that refused it.
+            </p>
+          </div>
+        )}
+
+        {cal && (
+          <p className="calib__ops mono">
+            labeled {cal.labeled}/{cal.decisions} · due {cal.dueForLabel} · oldest unlabeled{" "}
+            {cal.oldestUnlabeledAgeMin ?? "--"}m · death {deathPct(cal.deathRate)}
+          </p>
+        )}
+      </div>
+    )
+  }
 
   /**
    * Research panel: a real embedded browser, not a link list. The page lives
@@ -440,6 +747,8 @@ export default function App() {
                 return renderGates()
               case "book":
                 return renderBook()
+              case "calibration":
+                return renderCalibration()
               case "browser":
                 return renderBrowser(panel)
             }
