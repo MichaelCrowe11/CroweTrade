@@ -9,13 +9,17 @@
  *
  * This is the Cortex model with a trading vocabulary: instead of terminal and
  * farm panels, CroweTrade opens a scan, a chart, safety gates, the paper book,
- * an analyst, and a browser for looking a token up on chain.
+ * and a browser for looking a token up on chain. The Analyst is NOT a
+ * workspace panel: it is a drawer docked at the left edge (state below),
+ * following Cortex's conversation panel, because a conversation runs alongside
+ * whatever is being read rather than competing with it for row space.
  */
 
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
+import { migratePanelsV1, type StoredPanel } from "./migrate.js"
 
-export type PanelType = "scan" | "chart" | "gates" | "book" | "analyst" | "browser"
+export type PanelType = "scan" | "chart" | "gates" | "book" | "browser"
 
 export interface Panel {
   id: string
@@ -32,7 +36,6 @@ export const PANEL_LABELS: Record<PanelType, string> = {
   chart: "Chart",
   gates: "Gates",
   book: "Book",
-  analyst: "Analyst",
   browser: "Browser",
 }
 
@@ -48,15 +51,18 @@ const SINGLE_INSTANCE: ReadonlySet<PanelType> = new Set<PanelType>([
   "chart",
   "gates",
   "book",
-  "analyst",
 ])
 
 interface PanelsState {
   panels: Panel[]
+  /** The Analyst drawer, docked left of the workspace. Not a panel. */
+  analystOpen: boolean
   addPanel: (type: PanelType, focus?: boolean, payload?: Record<string, unknown>) => void
   closePanel: (id: string) => void
   focusPanel: (id: string) => void
   splitFocusedDown: () => void
+  toggleAnalyst: () => void
+  closeAnalyst: () => void
   closeAll: () => void
   reset: () => void
 }
@@ -84,6 +90,7 @@ export const usePanels = create<PanelsState>()(
   persist(
     (set, get) => ({
       panels: DEFAULT_PANELS,
+      analystOpen: false,
 
       addPanel: (type, focus = true, payload) => {
         const panels = get().panels
@@ -96,7 +103,7 @@ export const usePanels = create<PanelsState>()(
         }
         const id = makeId(type)
         // New panels join the focused panel's row rather than starting their
-        // own: an operator adding the analyst wants it beside what they are
+        // own: an operator adding the book wants it beside what they are
         // looking at, not stacked underneath it.
         const row = panels.find((p) => p.focused)?.row ?? 0
         set({
@@ -137,10 +144,31 @@ export const usePanels = create<PanelsState>()(
         })
       },
 
+      toggleAnalyst: () => set({ analystOpen: !get().analystOpen }),
+      closeAnalyst: () => set({ analystOpen: false }),
+
       closeAll: () => set({ panels: DEFAULT_PANELS }),
-      reset: () => set({ panels: DEFAULT_PANELS }),
+      reset: () => set({ panels: DEFAULT_PANELS, analystOpen: false }),
     }),
-    { name: "crowetrade-panels" },
+    {
+      name: "crowetrade-panels",
+      version: 1,
+      // v0 workspaces could hold "analyst" panels; migrate.ts drops them and
+      // hands focus over exactly the way closePanel would.
+      migrate: (persisted, version) => {
+        const state = persisted as { panels?: StoredPanel[]; analystOpen?: boolean }
+        if (version < 1) {
+          return {
+            ...state,
+            panels: migratePanelsV1(state.panels ?? [], DEFAULT_PANELS) as Panel[],
+            // The operator had the analyst open as a panel; keep it available
+            // in its new home rather than silently vanishing it.
+            analystOpen: (state.panels ?? []).some((p) => p.type === "analyst"),
+          }
+        }
+        return state
+      },
+    },
   ),
 )
 

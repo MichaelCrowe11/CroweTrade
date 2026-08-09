@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { AnimatePresence, motion } from "motion/react"
 import { fetchCandidates, type Candidate } from "./feed/dexscreener.js"
 import { fetchMintFacts } from "./feed/solana.js"
 import { evaluateGates, combineVerdict, type Verdict } from "./safety/gates.js"
@@ -7,9 +8,11 @@ import { PriceChart } from "./components/PriceChart.js"
 import { age, usd, shortMint } from "./components/format.js"
 import { Spark } from "./components/Spark.js"
 import { Rail } from "./shell/Rail.js"
-import { Workspace } from "./shell/Workspace.js"
+import { Workspace, CloseIcon } from "./shell/Workspace.js"
 import { AnalystPanel } from "./shell/AnalystPanel.js"
-import type { Panel } from "./shell/panels.js"
+import { BrowserPanel } from "./shell/BrowserPanel.js"
+import { usePanels, type Panel } from "./shell/panels.js"
+import { DURATIONS, EASINGS, MAGNITUDES } from "./shell/motion.js"
 
 const REFRESH_MS = 20_000
 const ENGINE = "https://crowetrade-engine.yellow-block-3adc.workers.dev"
@@ -93,6 +96,8 @@ const VERDICT_NOTE: Record<Verdict, string> = {
 }
 
 export default function App() {
+  const analystOpen = usePanels((s) => s.analystOpen)
+  const closeAnalyst = usePanels((s) => s.closeAnalyst)
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [solUsd, setSolUsd] = useState<number | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -340,33 +345,24 @@ export default function App() {
   )
 
   /**
-   * Research panel. Opens the selected mint on a block explorer in the system
-   * browser rather than embedding a webview: an Electron webview loading
-   * arbitrary remote pages next to a trading surface is an attack surface, and
-   * the operator already has a real browser with their sessions in it.
+   * Research panel: a real embedded browser, not a link list. The page lives
+   * in a main-process WebContentsView (sandboxed, context-isolated, node-free,
+   * own session partition, popups to the system browser) because an iframe is
+   * not a browser: the sites an operator needs refuse embedding. This renderer
+   * only draws the chrome. The earlier link-list rationale (webview as attack
+   * surface) is answered by the isolation above, not forgotten.
    */
-  const renderBrowser = () => (
-    <div className="research">
-      {!active && <p className="empty">Select a candidate.</p>}
-      {active && (
-        <>
-          <p className="research__hint">Look up {active.symbol} on chain.</p>
-          <div className="research__links">
-            {[
-              ["Solscan", `https://solscan.io/token/${active.mint}`],
-              ["DexScreener", `https://dexscreener.com/solana/${active.mint}`],
-              ["Pump.fun", `https://pump.fun/coin/${active.mint}`],
-              ["Birdeye", `https://birdeye.so/token/${active.mint}?chain=solana`],
-            ].map(([label, href]) => (
-              <a key={label} className="research__link" href={href} target="_blank" rel="noreferrer">
-                {label}
-              </a>
-            ))}
-          </div>
-          <p className="research__mint mono">{active.mint}</p>
-        </>
-      )}
-    </div>
+  const renderBrowser = (panel: Panel) => (
+    <BrowserPanel
+      panelId={panel.id}
+      initialUrl={
+        typeof panel.payload?.["url"] === "string"
+          ? (panel.payload["url"] as string)
+          : active
+            ? `https://solscan.io/token/${active.mint}`
+            : "https://solscan.io"
+      }
+    />
   )
 
   return (
@@ -404,6 +400,35 @@ export default function App() {
 
       <div className="body">
         <Rail />
+        {/* The Analyst pops out from the left edge beside the rail, Cortex's
+            conversation-panel pattern. It DOCKS rather than overlays: browser
+            panels are native views composited above this page, so anything
+            that floated over the workspace would render underneath them. */}
+        <AnimatePresence initial={false}>
+          {analystOpen && (
+            <motion.aside
+              className="drawer"
+              aria-label="Analyst drawer"
+              initial={{ x: -MAGNITUDES.slide, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: -MAGNITUDES.slide, opacity: 0 }}
+              transition={{ duration: DURATIONS.smooth, ease: EASINGS.snap }}
+            >
+              <header className="drawer__head">
+                <span className="ws__title">Analyst</span>
+                <button
+                  type="button"
+                  className="ws__act drawer__close"
+                  onClick={closeAnalyst}
+                  aria-label="Close the Analyst drawer"
+                >
+                  <CloseIcon />
+                </button>
+              </header>
+              <AnalystPanel mint={active?.mint ?? null} />
+            </motion.aside>
+          )}
+        </AnimatePresence>
         <Workspace
           render={(panel: Panel) => {
             switch (panel.type) {
@@ -415,10 +440,8 @@ export default function App() {
                 return renderGates()
               case "book":
                 return renderBook()
-              case "analyst":
-                return <AnalystPanel mint={active?.mint ?? null} />
               case "browser":
-                return renderBrowser()
+                return renderBrowser(panel)
             }
           }}
         />

@@ -12,14 +12,7 @@ import { useEffect, useState } from "react"
  * headers; see electron/main.ts.
  */
 
-declare global {
-  interface Window {
-    crowetrade?: {
-      candles?: (pool: string) => Promise<number[][]>
-      ask?: (question: string) => Promise<{ text: string; consulted: string[] }>
-    }
-  }
-}
+/* window.crowetrade is declared once for the whole app in src/bridge.d.ts. */
 
 const W = 720
 const H = 240

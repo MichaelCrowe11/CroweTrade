@@ -9,9 +9,15 @@ import { DURATIONS, EASINGS, MAGNITUDES } from "./motion.js"
  * with its own stroke weight and optical sizing, and the house language here is
  * a 1.6px round-cap stroke on a 24px box, which is what the desktop renderer
  * uses. Six shapes is less code than a dependency.
+ *
+ * The Analyst button is the odd one out: it toggles the drawer docked beside
+ * this rail rather than opening a workspace panel, following Cortex's
+ * conversation panel. Same button language, different destination.
  */
 
-const ICONS: Record<PanelType, JSX.Element> = {
+type RailKey = PanelType | "analyst"
+
+const ICONS: Record<RailKey, JSX.Element> = {
   // Scan: a list.
   scan: (
     <>
@@ -56,23 +62,29 @@ const ICONS: Record<PanelType, JSX.Element> = {
   ),
 }
 
-const ORDER: PanelType[] = ["scan", "chart", "gates", "book", "analyst", "browser"]
+const LABELS: Record<RailKey, string> = { ...PANEL_LABELS, analyst: "Analyst" }
+
+const ORDER: RailKey[] = ["scan", "chart", "gates", "book", "analyst", "browser"]
 
 export function Rail() {
   const panels = usePanels((s) => s.panels)
+  const analystOpen = usePanels((s) => s.analystOpen)
   const addPanel = usePanels((s) => s.addPanel)
-  const open = new Set(panels.map((p) => p.type))
+  const toggleAnalyst = usePanels((s) => s.toggleAnalyst)
+  const open = new Set<RailKey>(panels.map((p) => p.type))
+  if (analystOpen) open.add("analyst")
 
   return (
     <nav className="rail" aria-label="Panels">
-      {ORDER.map((type, i) => (
+      {ORDER.map((key, i) => (
         <motion.button
-          key={type}
+          key={key}
           type="button"
-          className={`rail__btn ${open.has(type) ? "rail__btn--open" : ""}`}
-          onClick={() => addPanel(type)}
-          title={PANEL_LABELS[type]}
-          aria-label={`Open ${PANEL_LABELS[type]}`}
+          className={`rail__btn ${open.has(key) ? "rail__btn--open" : ""}`}
+          onClick={() => (key === "analyst" ? toggleAnalyst() : addPanel(key))}
+          title={LABELS[key]}
+          aria-label={key === "analyst" ? "Toggle the Analyst drawer" : `Open ${LABELS[key]}`}
+          aria-pressed={key === "analyst" ? analystOpen : undefined}
           initial={{ opacity: 0, x: -MAGNITUDES.slide }}
           animate={{ opacity: 1, x: 0 }}
           transition={{
@@ -90,10 +102,10 @@ export function Rail() {
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              {ICONS[type]}
+              {ICONS[key]}
             </g>
           </svg>
-          <span className="rail__label">{PANEL_LABELS[type]}</span>
+          <span className="rail__label">{LABELS[key]}</span>
         </motion.button>
       ))}
     </nav>

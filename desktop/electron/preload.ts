@@ -1,14 +1,23 @@
-import { contextBridge, ipcRenderer } from "electron"
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron"
 
 /**
  * The renderer runs sandboxed with context isolation on, so it reaches the main
  * process only through what is explicitly exposed here.
  *
- * Nothing is exposed yet. When the app moves off public HTTP feeds and onto our
- * own pipeline, the feed subscription belongs here rather than in the renderer:
- * a websocket held in the renderer dies on reload and takes its backpressure
- * state with it, and any signing key must never be reachable from page context.
+ * The browser slice controls WebContentsViews that live entirely in the main
+ * process: the renderer names a panel id and a rectangle, and the main process
+ * decides whether a view exists, what it may load, and where popups go. No
+ * WebContents object ever crosses this bridge.
  */
+
+interface BrowserViewState {
+  id: string
+  url: string
+  canGoBack: boolean
+  canGoForward: boolean
+  loading: boolean
+}
+
 contextBridge.exposeInMainWorld("crowetrade", {
   platform: process.platform,
   /** 1-minute OHLCV for a pool, [ts, o, h, l, c, v] ascending. [] on failure. */
@@ -16,6 +25,26 @@ contextBridge.exposeInMainWorld("crowetrade", {
   /** Ask the Analyst. Returns the answer plus which engine endpoints it read. */
   ask: (question: string): Promise<{ text: string; consulted: string[] }> =>
     ipcRenderer.invoke("ask", question),
+
+  browser: {
+    ensure: (id: string, url: string): Promise<boolean> =>
+      ipcRenderer.invoke("browser:ensure", id, url),
+    setBounds: (
+      id: string,
+      bounds: { x: number; y: number; width: number; height: number },
+    ): Promise<void> => ipcRenderer.invoke("browser:bounds", id, bounds),
+    navigate: (id: string, url: string): Promise<void> =>
+      ipcRenderer.invoke("browser:navigate", id, url),
+    back: (id: string): Promise<void> => ipcRenderer.invoke("browser:back", id),
+    forward: (id: string): Promise<void> => ipcRenderer.invoke("browser:forward", id),
+    reload: (id: string): Promise<void> => ipcRenderer.invoke("browser:reload", id),
+    dispose: (id: string): Promise<void> => ipcRenderer.invoke("browser:dispose", id),
+    onState: (cb: (state: BrowserViewState) => void): (() => void) => {
+      const handler = (_e: IpcRendererEvent, state: BrowserViewState) => cb(state)
+      ipcRenderer.on("browser:state", handler)
+      return () => ipcRenderer.removeListener("browser:state", handler)
+    },
+  },
 })
 
 export {}

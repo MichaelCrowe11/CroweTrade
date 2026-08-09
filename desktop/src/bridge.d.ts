@@ -1,0 +1,38 @@
+/**
+ * The preload bridge, as the renderer sees it.
+ *
+ * One declaration for the whole app: TypeScript refuses two declarations of
+ * the same Window property with different shapes, so every panel that talks to
+ * the main process describes its slice of the bridge here rather than inline.
+ * Everything is optional because the renderer must degrade honestly when the
+ * preload did not run (vite dev in a plain browser, or a broken build).
+ */
+
+interface BrowserViewState {
+  id: string
+  url: string
+  canGoBack: boolean
+  canGoForward: boolean
+  loading: boolean
+}
+
+interface Window {
+  crowetrade?: {
+    platform?: string
+    candles?: (pool: string) => Promise<number[][]>
+    ask?: (question: string) => Promise<{ text: string; consulted: string[] }>
+    browser?: {
+      ensure: (id: string, url: string) => Promise<boolean>
+      setBounds: (
+        id: string,
+        bounds: { x: number; y: number; width: number; height: number },
+      ) => Promise<void>
+      navigate: (id: string, url: string) => Promise<void>
+      back: (id: string) => Promise<void>
+      forward: (id: string) => Promise<void>
+      reload: (id: string) => Promise<void>
+      dispose: (id: string) => Promise<void>
+      onState: (cb: (state: BrowserViewState) => void) => () => void
+    }
+  }
+}

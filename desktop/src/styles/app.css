@@ -621,12 +621,12 @@ body {
  * carpentering a workspace. */
 
 .body {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
+  display: flex;
   min-height: 0;
 }
 
 .rail {
+  flex: 0 0 72px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -672,34 +672,58 @@ body {
 }
 
 .ws {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-height: 0;
-  background: var(--clm-line);
-}
-
-.ws__row {
-  display: flex;
-  gap: 1px;
-  flex: 1;
-  min-height: 0;
-  background: var(--clm-line);
-}
-
-.ws__panel {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+}
+
+/* react-resizable-panels owns the flex layout of .ws__grid, .ws__panel and
+ * .ws__rowpanel through inline styles; these rules only pin the box sizing so
+ * nested content cannot force a panel wider than its share. */
+.ws__grid { width: 100%; height: 100%; }
+.ws__panel, .ws__rowpanel { min-width: 0; min-height: 0; }
+
+.ws__panelbox {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   background: var(--clm-cream);
+}
+
+/* The drag handle between panels, Cortex's pattern: a hairline of gold wash
+ * that declares itself on approach. Derived from the gold token rather than a
+ * new hex so the handle moves when the brand does. */
+.ws__handle {
+  flex-shrink: 0;
+  width: 4px;
+  background: color-mix(in srgb, var(--clm-gold) 8%, transparent);
+  cursor: col-resize;
+  transition: background var(--clm-dur) var(--clm-ease);
+}
+
+.ws__handle:hover,
+.ws__handle[data-resize-handle-active] {
+  background: color-mix(in srgb, var(--clm-gold) 45%, transparent);
+}
+
+.ws__handle:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--clm-gold) 55%, transparent);
+}
+
+/* Row-axis variant: same bar, lying down. */
+.ws__handle--row {
+  width: auto;
+  height: 4px;
+  cursor: row-resize;
 }
 
 /* The focused panel is where a newly opened one will land, so it carries a
  * quiet gold top edge rather than a full border that would fight the panel
  * chrome around it. */
-.ws__panel--focused .ws__head { border-top: 1px solid var(--clm-gold-deep); }
+.ws__panelbox--focused .ws__head { border-top: 1px solid var(--clm-gold-deep); }
 
 .ws__head {
   display: flex;
@@ -719,7 +743,9 @@ body {
   color: var(--clm-muted);
 }
 
-.ws__close {
+.ws__acts { display: flex; gap: 2px; }
+
+.ws__act {
   display: flex;
   padding: 3px;
   border: 0;
@@ -731,8 +757,9 @@ body {
   transition: opacity var(--clm-dur) var(--clm-ease), color var(--clm-dur) var(--clm-ease);
 }
 
-.ws__panel:hover .ws__close, .ws__close:focus-visible { opacity: 1; }
-.ws__close:hover { color: var(--clm-down); }
+.ws__panelbox:hover .ws__act, .ws__act:focus-visible { opacity: 1; }
+.ws__act:hover { color: var(--clm-ink); }
+.ws__act--close:hover { color: var(--clm-down); }
 
 .ws__body { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 .ws__body::-webkit-scrollbar { width: 10px; }
@@ -811,22 +838,111 @@ body {
 .analyst__send:hover:not(:disabled) { background: var(--clm-accent-wash); }
 .analyst__send:disabled { opacity: 0.4; cursor: default; }
 
-/* ── Research ────────────────────────────────────────────────────────────── */
+/* ── Analyst drawer ──────────────────────────────────────────────────────────
+ * Docked between the rail and the workspace, Cortex's conversation-panel
+ * pattern. It pushes the workspace rather than floating over it: browser
+ * panels are native views composited above this page, and an overlay would
+ * render underneath them. Depth is the house recipe: a lightness step up from
+ * the canvas, the lit top edge inside --clm-z3, tinted shadow. */
 
-.research { padding: 18px; display: flex; flex-direction: column; gap: 14px; }
-.research__hint { margin: 0; font-size: var(--clm-fs-sm); color: var(--clm-muted); }
-.research__links { display: flex; flex-wrap: wrap; gap: 8px; }
+.drawer {
+  flex: 0 0 380px;
+  width: 380px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--clm-panel);
+  border-right: 1px solid var(--clm-line);
+  box-shadow: var(--clm-z3);
+}
 
-.research__link {
-  padding: 7px 13px;
-  border: 1px solid var(--clm-line);
+.drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--clm-line);
+}
+
+.drawer .analyst { flex: 1; min-height: 0; }
+
+/* The drawer's close affordance is always visible; hover-reveal is for panel
+ * grids where six close buttons at once would be noise. One drawer, one X. */
+.drawer .ws__act { opacity: 1; }
+
+/* ── Browser panel ───────────────────────────────────────────────────────────
+ * Chrome only: the page itself is a main-process WebContentsView told to fill
+ * .browser__host. The hint underneath is the honest failure state; if the
+ * native view never arrives, the panel says so instead of going black. */
+
+.browser {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.browser__bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--clm-line);
+}
+
+.browser__nav {
+  display: flex;
+  padding: 5px;
+  border: 0;
+  border-radius: var(--clm-r-xs);
+  background: transparent;
+  color: var(--clm-muted);
+  cursor: pointer;
+  transition: color var(--clm-dur) var(--clm-ease), background var(--clm-dur) var(--clm-ease);
+}
+
+.browser__nav:hover:not(:disabled) { color: var(--clm-ink); background: var(--clm-panel); }
+.browser__nav:disabled { opacity: 0.35; cursor: default; }
+.browser__nav:focus-visible { outline: 2px solid var(--clm-gold); outline-offset: 1px; }
+
+.browser__form { flex: 1; display: flex; min-width: 0; }
+
+.browser__url {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 11px;
+  border: 1px solid var(--clm-line-strong);
   border-top-color: var(--clm-hair-top);
   border-radius: var(--clm-r-md);
-  background: var(--clm-panel);
+  background: var(--clm-raised);
   color: var(--clm-ink);
   font-size: var(--clm-fs-sm);
-  text-decoration: none;
-  transition: border-color var(--clm-dur) var(--clm-ease), color var(--clm-dur) var(--clm-ease);
+  user-select: text;
 }
-.research__link:hover { border-color: var(--clm-gold); color: var(--clm-gold); }
-.research__mint { font-size: var(--clm-fs-cap); color: var(--clm-muted); user-select: text; word-break: break-all; }
+
+.browser__url:focus { outline: none; border-color: var(--clm-gold); box-shadow: 0 0 0 3px var(--clm-focus-halo); }
+.browser__url::placeholder { color: var(--clm-muted); opacity: 0.72; }
+
+/* A refused address is a failure, so it reads on the red axis, at the quiet
+ * volume: it is information about the input, not an alarm about the market. */
+.browser__url[aria-invalid="true"] { border-color: var(--clm-down); }
+
+.browser__loading {
+  font-size: var(--clm-fs-cap);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--clm-muted);
+}
+
+.browser__host {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--clm-cream);
+}
+
+.browser__hint { color: var(--clm-muted); font-size: var(--clm-fs-sm); }

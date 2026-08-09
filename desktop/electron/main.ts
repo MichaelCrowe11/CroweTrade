@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron"
+import { app, BrowserWindow, WebContentsView, ipcMain, session, shell } from "electron"
 import { execFileSync } from "node:child_process"
 import * as fs from "node:fs"
 import * as path from "node:path"
@@ -84,6 +84,89 @@ async function fetchCandles(pool: string): Promise<number[][]> {
   return rows
 }
 
+/* ── In-app browser ──────────────────────────────────────────────────────────
+ *
+ * Each browser panel in the renderer is backed by a WebContentsView owned
+ * here. Not an iframe (modern sites refuse embedding; Cortex documented the
+ * same conclusion) and not a webview tag (deprecated posture, weaker process
+ * story). The renderer is only a control surface: it names a panel id and a
+ * rectangle; this process decides whether a view exists, what it may load,
+ * and where popups go. Views are sandboxed, context-isolated, node-free, and
+ * live in their own persistent session partition so nothing they load shares
+ * state with the terminal's renderer.
+ */
+const BROWSER_PARTITION = "persist:crowetrade-browser"
+/** Panel ids come from the renderer's store; anything else is refused. */
+const BROWSER_PANEL_ID = /^browser-[A-Za-z0-9-]+$/
+const browserViews = new Map<string, WebContentsView>()
+
+function isHttpUrl(u: unknown): u is string {
+  if (typeof u !== "string") return false
+  try {
+    const p = new URL(u).protocol
+    return p === "https:" || p === "http:"
+  } catch {
+    return false
+  }
+}
+
+function pushBrowserState(id: string, view: WebContentsView): void {
+  const wc = view.webContents
+  const send = () => {
+    win?.webContents.send("browser:state", {
+      id,
+      url: wc.getURL(),
+      canGoBack: wc.navigationHistory.canGoBack(),
+      canGoForward: wc.navigationHistory.canGoForward(),
+      loading: wc.isLoading(),
+    })
+  }
+  wc.on("did-navigate", send)
+  wc.on("did-navigate-in-page", send)
+  wc.on("did-start-loading", send)
+  wc.on("did-stop-loading", send)
+}
+
+function ensureBrowserView(id: string, url: string): boolean {
+  if (!win) return false
+  if (browserViews.has(id)) return true
+  const view = new WebContentsView({
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      partition: BROWSER_PARTITION,
+    },
+  })
+  // Invisible until the renderer reports where its panel sits.
+  view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+  // target=_blank and window.open land in the operator's real browser, where
+  // their sessions live; a chrome-less child window here would be neither.
+  view.webContents.setWindowOpenHandler(({ url: target }) => {
+    if (isHttpUrl(target)) void shell.openExternal(target)
+    return { action: "deny" }
+  })
+  // In-view navigation stays on the web; file:, about:, custom schemes are
+  // refused before they start.
+  view.webContents.on("will-navigate", (e, target) => {
+    if (!isHttpUrl(target)) e.preventDefault()
+  })
+  pushBrowserState(id, view)
+  win.contentView.addChildView(view)
+  browserViews.set(id, view)
+  // Failures surface through did-stop-loading state, not a rejection.
+  void view.webContents.loadURL(url).catch(() => {})
+  return true
+}
+
+function disposeBrowserView(id: string): void {
+  const view = browserViews.get(id)
+  if (!view) return
+  browserViews.delete(id)
+  win?.contentView.removeChildView(view)
+  view.webContents.close()
+}
+
 // Presence of the dev server URL is what selects the dev renderer, NOT
 // app.isPackaged. Running `electron .` against a production bundle is
 // unpackaged too, so keying off isPackaged sends it to a dev server that is not
@@ -121,13 +204,37 @@ function createWindow(): void {
   // driving `screencapture` at a window someone else is actively using steals
   // focus and races macOS Spaces; the window photographing itself does neither.
   const shotPath = process.env["CROWETRADE_SHOT"]
+  const shotState = process.env["CROWETRADE_SHOT_STATE"]
+  let shotSeeded = false
   if (shotPath) {
-    win.webContents.once("did-finish-load", () => {
+    win.webContents.on("did-finish-load", () => {
+      // Optional workspace seeding, dev-only like the shot itself: the
+      // persisted zustand envelope goes into localStorage verbatim and the
+      // page reloads once, so a screenshot can show a layout other than the
+      // default without anyone clicking.
+      if (shotState && !shotSeeded) {
+        shotSeeded = true
+        void win?.webContents.executeJavaScript(
+          `localStorage.setItem("crowetrade-panels", ${JSON.stringify(shotState)}); location.reload()`,
+        )
+        return
+      }
       setTimeout(() => {
         win?.webContents
           .capturePage()
           .then((img) => fs.promises.writeFile(shotPath, img.toPNG()))
           .catch((e: unknown) => console.error("self-capture failed:", e))
+        // capturePage on the window does NOT composite child WebContentsViews,
+        // so each browser view photographs itself alongside.
+        let n = 0
+        for (const view of browserViews.values()) {
+          const p = shotPath.replace(/\.png$/, n === 0 ? "-view.png" : `-view${n}.png`)
+          n++
+          view.webContents
+            .capturePage()
+            .then((img) => fs.promises.writeFile(p, img.toPNG()))
+            .catch((e: unknown) => console.error("view self-capture failed:", e))
+        }
       }, 12_000)
     })
   }
@@ -152,6 +259,8 @@ function createWindow(): void {
   })
 
   win.on("closed", () => {
+    // The views die with the window's view hierarchy; only the map survives.
+    browserViews.clear()
     win = null
   })
 }
@@ -179,6 +288,66 @@ void app.whenReady().then(() => {
     } catch {
       return []
     }
+  })
+
+  // The embedded browser renders arbitrary web pages beside a trading surface,
+  // so its session gets no permissions at all: no camera, no clipboard-read,
+  // no notifications. A block explorer needs none of them.
+  session
+    .fromPartition(BROWSER_PARTITION)
+    .setPermissionRequestHandler((_wc, _permission, cb) => cb(false))
+
+  ipcMain.handle("browser:ensure", (_e, id: unknown, url: unknown) => {
+    if (typeof id !== "string" || !BROWSER_PANEL_ID.test(id)) return false
+    return ensureBrowserView(id, isHttpUrl(url) ? url : "https://solscan.io")
+  })
+
+  ipcMain.handle("browser:bounds", (_e, id: unknown, bounds: unknown) => {
+    if (typeof id !== "string") return
+    const view = browserViews.get(id)
+    const b = bounds as { x?: unknown; y?: unknown; width?: unknown; height?: unknown } | null
+    if (!view || !b) return
+    const { x, y, width, height } = b
+    if (
+      typeof x !== "number" || typeof y !== "number" ||
+      typeof width !== "number" || typeof height !== "number" ||
+      ![x, y, width, height].every(Number.isFinite)
+    ) {
+      return
+    }
+    view.setBounds({
+      x: Math.max(0, Math.round(x)),
+      y: Math.max(0, Math.round(y)),
+      width: Math.max(0, Math.round(width)),
+      height: Math.max(0, Math.round(height)),
+    })
+  })
+
+  ipcMain.handle("browser:navigate", (_e, id: unknown, url: unknown) => {
+    if (typeof id !== "string" || !isHttpUrl(url)) return
+    void browserViews.get(id)?.webContents.loadURL(url).catch(() => {})
+  })
+
+  ipcMain.handle("browser:back", (_e, id: unknown) => {
+    if (typeof id !== "string") return
+    const wc = browserViews.get(id)?.webContents
+    if (wc?.navigationHistory.canGoBack()) wc.navigationHistory.goBack()
+  })
+
+  ipcMain.handle("browser:forward", (_e, id: unknown) => {
+    if (typeof id !== "string") return
+    const wc = browserViews.get(id)?.webContents
+    if (wc?.navigationHistory.canGoForward()) wc.navigationHistory.goForward()
+  })
+
+  ipcMain.handle("browser:reload", (_e, id: unknown) => {
+    if (typeof id !== "string") return
+    browserViews.get(id)?.webContents.reload()
+  })
+
+  ipcMain.handle("browser:dispose", (_e, id: unknown) => {
+    if (typeof id !== "string") return
+    disposeBrowserView(id)
   })
 
   createWindow()
