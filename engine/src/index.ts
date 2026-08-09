@@ -10,6 +10,7 @@
  */
 
 import { Ledger } from "./ledger.js"
+import { priceFor, paymentRequired, settle, ROUTES, SOLANA_MAINNET } from "./x402.js"
 
 export { Ledger }
 
@@ -59,6 +60,69 @@ export default {
       if (url.pathname === "/api/positions" && req.method === "GET") {
         return json(await ledger(env).summary())
       }
+      // ── Paid surface (x402) ────────────────────────────────────────────
+      //
+      // Free endpoints stay free: the paper record is the demo and putting it
+      // behind a paywall would hide the one thing that makes this credible.
+      // What is sold is the thing that costs us to produce and that nobody
+      // else has: chain-read safety gates and the labeled outcome corpus.
+      if (url.pathname === "/api/v1" && req.method === "GET") {
+        // Discovery. An agent cannot buy what it cannot find, and a bare 402
+        // on an unknown path teaches it nothing.
+        return json({
+          service: "CroweTrade data API",
+          payment: { protocol: "x402", version: 2, network: SOLANA_MAINNET, asset: "USDC" },
+          configured: Boolean(env.X402_PAY_TO && env.X402_FACILITATOR),
+          endpoints: Object.entries(ROUTES).map(([path, r]) => ({
+            path: `${path}/{mint}`.replace("/{mint}", path === "/api/v1/safety" ? "/{mint}" : ""),
+            priceUsd: (Number(r.amount) / 1_000_000).toFixed(4),
+            description: r.description,
+          })),
+          free: ["/api/health", "/api/positions", "/api/exit-sweep", "/api/train"],
+        })
+      }
+
+      const priced = priceFor(url.pathname)
+      if (priced) {
+        const payTo = env.X402_PAY_TO
+        const facilitator = env.X402_FACILITATOR
+        if (!payTo || !facilitator) {
+          // Unconfigured is a server problem, not a client one. Saying "402"
+          // here would tell an agent to pay an address that does not exist.
+          return json(
+            { error: "payments_not_configured", detail: "X402_PAY_TO and X402_FACILITATOR are unset" },
+            503,
+          )
+        }
+
+        const sig = req.headers.get("PAYMENT-SIGNATURE")
+        if (!sig) return paymentRequired(req, priced, payTo)
+
+        // Settle BEFORE serving. Verifying without settling would hand out
+        // paid answers on a promise.
+        const result = await settle(sig, priced, payTo, facilitator)
+        if (!result.ok) {
+          const res = paymentRequired(req, priced, payTo, result.errorReason ?? "settlement_failed")
+          res.headers.set("PAYMENT-RESPONSE", result.header)
+          return res
+        }
+
+        const body =
+          url.pathname.startsWith("/api/v1/safety")
+            ? await (async () => {
+                const mint = url.pathname.split("/").pop() ?? ""
+                if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) {
+                  return { error: "invalid_mint", detail: "expected a base58 Solana mint address" }
+                }
+                return await ledger(env).safetyFor(mint)
+              })()
+            : ledger(env).corpusStats()
+
+        const res = json(body)
+        res.headers.set("PAYMENT-RESPONSE", result.header)
+        return res
+      }
+
       if (url.pathname === "/api/train" && req.method === "GET") {
         return json(await ledger(env).trainModel())
       }

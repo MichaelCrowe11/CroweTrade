@@ -1032,6 +1032,89 @@ export class Ledger extends DurableObject<Env> {
     }
   }
 
+  /**
+   * Paid: survivability gates for an arbitrary mint, read from chain.
+   *
+   * This is the sellable primitive. An agent about to touch a token wants to
+   * know whether the deployer can still print supply, whether the liquidity can
+   * be pulled, and whether one wallet holds enough to crater it. Those are
+   * chain reads, and unknown is reported as unknown rather than rounded to
+   * safe, which is the difference between this and every "safe: true" boolean
+   * an aggregator will sell you.
+   */
+  async safetyFor(mint: string): Promise<unknown> {
+    configureRpc(this.env.HELIUS_API_KEY)
+    const signal = new AbortController().signal
+
+    const facts = await fetchMintFacts([mint], signal).catch(() => new Map<string, MintFacts>())
+    const f = facts.get(mint)
+    const share = f ? await fetchTopHolderShare(mint, f.supply, signal) : undefined
+
+    // Deployer history from our own corpus, when we have seen this creator.
+    const creator = this.sql().exec<{ creator: string }>(
+      "SELECT creator FROM creators WHERE mint = ?", mint,
+    ).toArray()[0]?.creator
+    let priorMints: number | undefined
+    let priorRugs: number | undefined
+    if (creator) {
+      const h = this.sql().exec<{ prior: number; rugs: number }>(
+        `SELECT COUNT(*) AS prior, SUM(CASE WHEN d.died = 1 THEN 1 ELSE 0 END) AS rugs
+         FROM creators cr JOIN decisions d ON d.mint = cr.mint
+         WHERE cr.creator = ? AND cr.mint != ? AND d.labeled = 1`,
+        creator, mint,
+      ).one()
+      if (h.prior > 0) { priorMints = h.prior; priorRugs = h.rugs ?? 0 }
+    }
+
+    const snapshot = {
+      mint,
+      asOf: Date.now(),
+      launchedAt: null,
+      mintAuthority: f?.mintAuthority,
+      freezeAuthority: f?.freezeAuthority,
+      lpLockedBps: undefined,
+      topHolderShare: share,
+      solReserveLamports: undefined,
+      deployerPriorMints: priorMints,
+      deployerPriorRugs: priorRugs,
+    }
+    const gates = evaluateGates(snapshot)
+    return {
+      mint,
+      verdict: combineVerdict(gates),
+      gates: gates.map((g) => ({ id: g.id, state: g.state, detail: g.detail, severity: g.severity })),
+      creator: creator ?? null,
+      note: "unknown means unmeasured, never safe. A verdict of 'caution' means at least one critical gate could not be resolved.",
+    }
+  }
+
+  /** Paid: outcome statistics from the labeled corpus, split by origin. */
+  corpusStats(): unknown {
+    const sql = this.sql()
+    const byOrigin = sql.exec<{
+      origin: string; labeled: number; died: number | null; avg_ret: number | null
+    }>(
+      `SELECT COALESCE(origin,'unknown') AS origin,
+              SUM(labeled) AS labeled,
+              SUM(CASE WHEN labeled=1 AND died=1 THEN 1 ELSE 0 END) AS died,
+              AVG(CASE WHEN labeled=1 THEN forward_ret_pct END) AS avg_ret
+       FROM decisions GROUP BY COALESCE(origin,'unknown') HAVING SUM(labeled) > 0`,
+    ).toArray().map((r) => ({
+      origin: r.origin,
+      labeled: r.labeled ?? 0,
+      deathRate: (r.labeled ?? 0) > 0 ? Number(((r.died ?? 0) / (r.labeled ?? 1)).toFixed(3)) : null,
+      avgForwardRet30mPct: r.avg_ret === null ? null : Number(r.avg_ret.toFixed(2)),
+    }))
+    const total = sql.exec<{ n: number }>("SELECT SUM(labeled) AS n FROM decisions").one().n ?? 0
+    return {
+      horizonMinutes: 30,
+      totalLabeled: total,
+      byOrigin,
+      method:
+        "Every eligible launch is snapshotted at decision time and scored 30 minutes later from our own observations. Refused launches are followed identically to entered ones, so the sample is not survivorship-biased.",
+    }
+  }
+
   setKill(on: boolean): void {
     this.metaSet("kill", on ? "1" : "0")
     this.event("kill", { on })
