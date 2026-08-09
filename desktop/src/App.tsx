@@ -14,7 +14,16 @@ import { BrowserPanel } from "./shell/BrowserPanel.js"
 import { usePanels, type Panel } from "./shell/panels.js"
 import { DURATIONS, EASINGS, MAGNITUDES } from "./shell/motion.js"
 import { describeEvent, type EngineEvent } from "./engine/events.js"
-import { standingOf, countdown, pct, gapPt } from "./engine/standing.js"
+import { standingOf, countdown, pct, gapPt, type Standing } from "./engine/standing.js"
+
+const STANDING_WORDS: Record<Standing["state"], string> = {
+  killed: "KILLED",
+  breaker: "HOLDING",
+  cap: "DAY CAP",
+  slots: "SLOTS FULL",
+  paused: "PAUSED",
+  trading: "TRADING",
+}
 
 const REFRESH_MS = 20_000
 const ENGINE = "https://crowetrade-engine.yellow-block-3adc.workers.dev"
@@ -347,8 +356,9 @@ export default function App() {
    * alarm hue rather than as a healthy TRADING, on the principle that unknown
    * never reads as pass.
    */
+  const standing = useMemo(() => (engine ? standingOf(engine) : null), [engine])
+
   const renderBook = () => {
-    const standing = engine ? standingOf(engine) : null
     const current = engine?.cohorts?.find((c) => c.current) ?? null
     return (
       <div className="exec">
@@ -363,14 +373,7 @@ export default function App() {
 
         {engine && standing && (
           <div className={`standing standing--${standing.state}`}>
-            <span className="standing__word">
-              {standing.state === "killed" && "KILLED"}
-              {standing.state === "breaker" && "HOLDING"}
-              {standing.state === "cap" && "DAY CAP"}
-              {standing.state === "slots" && "SLOTS FULL"}
-              {standing.state === "paused" && "PAUSED"}
-              {standing.state === "trading" && "TRADING"}
-            </span>
+            <span className="standing__word">{STANDING_WORDS[standing.state]}</span>
             <span className="standing__note">
               {standing.state === "killed" && "kill switch engaged; exits continue, entries do not"}
               {standing.state === "breaker" &&
@@ -755,6 +758,51 @@ export default function App() {
           }}
         />
       </div>
+
+      {/* The engine strip: the desktop's glass-box status bar idiom, carrying
+          the one fact this product exists to keep in view. The engine's
+          standing survives any panel arrangement, so closing the Book never
+          silences the engine. */}
+      <footer className="hud mono">
+        {engine && standing ? (
+          <>
+            <span className={`hud__standing hud__standing--${standing.state}`}>
+              {STANDING_WORDS[standing.state]}
+              {standing.state === "breaker" && standing.untilMs !== null && (
+                <span className="hud__clock"> {countdown(standing.untilMs, now)}</span>
+              )}
+            </span>
+            <span className="hud__sep" />
+            <span className="hud__item">
+              {(engine.mode ?? "").toUpperCase()}
+              {engine.policyHash ? ` ${engine.policyHash.slice(0, 8)}` : ""}
+            </span>
+            <span className="hud__sep" />
+            <span className="hud__item">{engine.open.length} open</span>
+            {engine.budget && (
+              <>
+                <span className="hud__sep" />
+                <span className="hud__item">
+                  {engine.budget.spentTodaySol.toFixed(2)} / {engine.budget.dailyCapSol} SOL
+                </span>
+              </>
+            )}
+            {engine.alert && (!engine.alert.configured || engine.alert.lastError) && (
+              <>
+                <span className="hud__sep" />
+                <span className="hud__fault">alert path down</span>
+              </>
+            )}
+          </>
+        ) : (
+          <span className="hud__item hud__item--dim">engine unreachable</span>
+        )}
+        <span className="hud__spacer" />
+        <span className="hud__item hud__item--dim">
+          {candidates.length} tracked
+          {solUsd !== null ? ` · SOL $${solUsd.toFixed(2)}` : ""}
+        </span>
+      </footer>
     </div>
   )
 }

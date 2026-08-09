@@ -36,7 +36,7 @@ body {
 
 .app {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto 1fr auto;
   height: 100%;
 }
 
@@ -60,7 +60,7 @@ body {
 
 .header__wordmark {
   font-family: var(--clm-font-display);
-  font-size: 16px;
+  font-size: var(--clm-fs-head);
   font-weight: 600;
   letter-spacing: 0.01em;
 }
@@ -137,54 +137,6 @@ body {
   .eyebrow__dot { animation: none; }
 }
 
-/* ── Body grid: scan | primary | support ────────────────────────────────── */
-
-.body {
-  display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 300px;
-  min-height: 0;
-}
-
-/* Scrollbars are always visible, not the macOS overlay default.
- *
- * An operator surface should never hide how much it is not showing. The
- * overlay scrollbar appears on scroll and fades, so a list of 40 candidates
- * looks identical to a list of 8 until you touch it, and "is there more below"
- * becomes a question you have to ask the interface instead of read from it.
- * Sized narrow and toned to the panel so it reads as an edge, not a control. */
-.pane {
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-}
-
-.pane::-webkit-scrollbar { width: 10px; }
-.pane::-webkit-scrollbar-track { background: transparent; }
-.pane::-webkit-scrollbar-thumb {
-  background: var(--clm-line-strong);
-  border-radius: var(--clm-r-pill);
-  /* Border of the track colour insets the thumb so it reads as a hairline
-   * rather than a bar filling the gutter. */
-  border: 3px solid var(--clm-cream);
-}
-.pane::-webkit-scrollbar-thumb:hover { background: var(--clm-gold-deep); }
-.pane--scan { border-right: 1px solid var(--clm-line); }
-.pane--support { border-left: 1px solid var(--clm-line); }
-
-.pane__title {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 14px 16px 10px;
-  background: var(--clm-cream);
-  border-bottom: 1px solid var(--clm-line);
-  font-family: var(--clm-font-mono);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.22em;
-  color: var(--clm-muted);
-}
-
 /* ── Scan list ──────────────────────────────────────────────────────────── */
 
 .scan__row {
@@ -206,11 +158,11 @@ body {
   transition: background 140ms var(--clm-ease);
 }
 
-.scan__row:hover { background: var(--clm-panel); }
+.scan__row:hover { background: var(--clm-raised); }
 .scan__row:focus-visible { outline: 2px solid var(--clm-gold); outline-offset: -2px; }
 
 .scan__row[aria-selected="true"] {
-  background: var(--clm-panel);
+  background: var(--clm-raised);
   border-left-color: var(--clm-gold);
   box-shadow: inset 0 1px 0 var(--clm-hair-top);
 }
@@ -285,7 +237,7 @@ body {
   gap: 6px;
   margin: -40px -44px 0;
   padding: 28px 44px 16px;
-  background: linear-gradient(var(--clm-cream) 78%, transparent);
+  background: linear-gradient(var(--clm-panel) 78%, transparent);
 }
 
 .primary__titlerow { display: flex; align-items: baseline; gap: 14px; }
@@ -326,7 +278,7 @@ body {
   border: 1px solid var(--clm-line);
   border-top-color: var(--clm-hair-top);
   border-radius: var(--clm-r-lg);
-  background: var(--clm-panel);
+  background: var(--clm-raised);
   box-shadow: var(--clm-z2);
 }
 
@@ -445,7 +397,7 @@ body {
   gap: 3px 11px;
   align-items: center;
   padding: 15px 16px;
-  background: var(--clm-panel);
+  background: var(--clm-raised);
 }
 
 .lamp__led {
@@ -671,6 +623,42 @@ body {
   color: var(--clm-blue);
 }
 
+/* ── Engine strip ────────────────────────────────────────────────────────────
+ * The glass-box status bar idiom from the desktop, carrying the one fact this
+ * product exists to keep in view: what the engine is doing right now, and why
+ * it is not entering when it is not. It survives any panel arrangement, so
+ * closing the Book never silences the engine. */
+
+.hud {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 16px;
+  border-top: 1px solid var(--clm-line);
+  background: var(--clm-panel);
+  box-shadow: inset 0 1px 0 var(--clm-hair-top);
+  font-size: var(--clm-fs-cap);
+  color: var(--clm-muted);
+}
+
+.hud__standing { font-weight: 600; letter-spacing: 0.14em; }
+.hud__standing--trading { color: var(--clm-blue); }
+.hud__standing--breaker { color: var(--clm-gold); }
+.hud__standing--cap, .hud__standing--slots { color: var(--clm-gold-deep); }
+.hud__standing--killed, .hud__standing--paused { color: var(--clm-lamp-fail); }
+.hud__clock { color: var(--clm-ink); font-weight: 500; }
+
+.hud__sep { width: 1px; height: 12px; background: var(--clm-line-strong); }
+.hud__item { color: var(--clm-ink); }
+.hud__item--dim { color: var(--clm-muted); }
+.hud__spacer { flex: 1; }
+
+.hud__fault {
+  color: var(--clm-lamp-fail);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
 /* ── Shell: rail + workspace ──────────────────────────────────────────────
  * Ported in spirit from Crowe Cortex. The rail opens readouts; the workspace
  * lays them out in rows. Deliberately not a drag-to-arrange tile engine: this
@@ -732,6 +720,9 @@ body {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  /* The gutter that lets the panel cards read as objects on the ground
+   * rather than regions of it. */
+  padding: 10px 12px;
 }
 
 /* react-resizable-panels owns the flex layout of .ws__grid, .ws__panel and
@@ -740,47 +731,61 @@ body {
 .ws__grid { width: 100%; height: 100%; }
 .ws__panel, .ws__rowpanel { min-width: 0; min-height: 0; }
 
+/* Each panel is a stepped surface per the house recipe: one lightness step up
+ * from the window ground, a lit top edge, a quiet tinted shadow. Rounded
+ * corners clip the header and body together so the card is one object. */
 .ws__panelbox {
   display: flex;
   flex-direction: column;
   width: 100%;
   height: 100%;
   min-height: 0;
-  background: var(--clm-cream);
+  background: var(--clm-panel);
+  border: 1px solid var(--clm-line);
+  border-top-color: var(--clm-hair-top);
+  border-radius: var(--clm-r-lg);
+  box-shadow: var(--clm-z1);
+  overflow: hidden;
+  transition: border-color var(--clm-dur) var(--clm-ease), box-shadow var(--clm-dur-slow) var(--clm-ease);
 }
 
-/* The drag handle between panels, Cortex's pattern: a hairline of gold wash
- * that declares itself on approach. Derived from the gold token rather than a
- * new hex so the handle moves when the brand does. */
+/* Focus rises: the active-surface idiom. The title takes the accent so the
+ * eye finds the working panel without a loud ring. */
+.ws__panelbox--focused {
+  border-color: var(--clm-line-strong);
+  border-top-color: var(--clm-hair-top);
+  box-shadow: var(--clm-z2);
+}
+.ws__panelbox--focused .ws__title { color: var(--clm-gold); }
+
+/* The drag handle is a gutter, not a bar: invisible until approached, then
+ * the house divider accent. Nothing on screen claims attention while nothing
+ * is being adjusted. */
 .ws__handle {
   flex-shrink: 0;
-  width: 4px;
-  background: color-mix(in srgb, var(--clm-gold) 8%, transparent);
+  width: 7px;
+  background: transparent;
+  border-radius: var(--clm-r-pill);
   cursor: col-resize;
-  transition: background var(--clm-dur) var(--clm-ease);
+  transition: background var(--clm-dur-slow) var(--clm-ease);
 }
 
 .ws__handle:hover,
 .ws__handle[data-resize-handle-active] {
-  background: color-mix(in srgb, var(--clm-gold) 45%, transparent);
+  background: var(--clm-gold-soft);
 }
 
 .ws__handle:focus-visible {
   outline: none;
-  background: color-mix(in srgb, var(--clm-gold) 55%, transparent);
+  background: var(--clm-gold);
 }
 
-/* Row-axis variant: same bar, lying down. */
+/* Row-axis variant: same gutter, lying down. */
 .ws__handle--row {
   width: auto;
-  height: 4px;
+  height: 7px;
   cursor: row-resize;
 }
-
-/* The focused panel is where a newly opened one will land, so it carries a
- * quiet gold top edge rather than a full border that would fight the panel
- * chrome around it. */
-.ws__panelbox--focused .ws__head { border-top: 1px solid var(--clm-gold-deep); }
 
 .ws__head {
   display: flex;
@@ -818,13 +823,16 @@ body {
 .ws__act:hover { color: var(--clm-ink); }
 .ws__act--close:hover { color: var(--clm-down); }
 
+/* Scrollbars are always visible, not the macOS overlay default: an operator
+ * surface should never hide how much it is not showing. The thumb's inset
+ * border matches the card surface so it reads as an edge, not a control. */
 .ws__body { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 .ws__body::-webkit-scrollbar { width: 10px; }
 .ws__body::-webkit-scrollbar-track { background: transparent; }
 .ws__body::-webkit-scrollbar-thumb {
   background: var(--clm-line-strong);
   border-radius: var(--clm-r-pill);
-  border: 3px solid var(--clm-cream);
+  border: 3px solid var(--clm-panel);
 }
 .ws__body::-webkit-scrollbar-thumb:hover { background: var(--clm-gold-deep); }
 
@@ -948,7 +956,7 @@ body {
   padding: 6px 11px;
   border: 1px solid var(--clm-line);
   border-radius: var(--clm-r-pill);
-  background: var(--clm-panel);
+  background: var(--clm-raised);
   color: var(--clm-ink);
   font: inherit;
   font-size: var(--clm-fs-sm);
@@ -1048,7 +1056,7 @@ body {
   border: 1px solid var(--clm-line);
   border-top-color: var(--clm-hair-top);
   border-radius: var(--clm-r-lg);
-  background: var(--clm-panel);
+  background: var(--clm-raised);
   box-shadow: var(--clm-z2);
 }
 
@@ -1112,7 +1120,9 @@ body {
 .skip__track {
   height: 6px;
   border-radius: var(--clm-radius);
-  background: var(--clm-panel);
+  /* A well dips below its surface, so on a panel card it goes to the ground
+   * step, not sideways to another panel tone. */
+  background: var(--clm-cream);
   overflow: hidden;
 }
 
@@ -1138,9 +1148,13 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  margin: 10px -2px 10px 12px;
   background: var(--clm-panel);
-  border-right: 1px solid var(--clm-line);
-  box-shadow: var(--clm-z3);
+  border: 1px solid var(--clm-line);
+  border-top-color: var(--clm-hair-top);
+  border-radius: var(--clm-r-lg);
+  box-shadow: var(--clm-z2);
+  overflow: hidden;
 }
 
 .drawer__head {
@@ -1189,7 +1203,7 @@ body {
   transition: color var(--clm-dur) var(--clm-ease), background var(--clm-dur) var(--clm-ease);
 }
 
-.browser__nav:hover:not(:disabled) { color: var(--clm-ink); background: var(--clm-panel); }
+.browser__nav:hover:not(:disabled) { color: var(--clm-ink); background: var(--clm-raised); }
 .browser__nav:disabled { opacity: 0.35; cursor: default; }
 .browser__nav:focus-visible { outline: 2px solid var(--clm-gold); outline-offset: 1px; }
 
