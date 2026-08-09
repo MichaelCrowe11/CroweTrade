@@ -21,6 +21,7 @@ import {
   fetchPairsForMints,
   type Candidate,
 } from "../../shared/dexscreener.js"
+import { fetchLaunchpadCandidates } from "../../shared/pumpfun.js"
 import {
   fetchMintFacts,
   fetchTopHolderShare,
@@ -107,6 +108,12 @@ export class Ledger extends DurableObject<Env> {
           origin TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_ticks_mint_at ON ticks (mint, at);
+        CREATE TABLE IF NOT EXISTS creators (
+          mint TEXT PRIMARY KEY,
+          creator TEXT NOT NULL,
+          first_seen INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_creators_creator ON creators (creator);
         CREATE TABLE IF NOT EXISTS decisions (
           mint TEXT PRIMARY KEY,
           at INTEGER NOT NULL,
@@ -321,6 +328,31 @@ export class Ledger extends DurableObject<Env> {
       this.event("scan_error", { message: e instanceof Error ? e.message : String(e) })
     }
 
+    // Second discovery source, added after the promotional feed was MEASURED
+    // unprofitable (entered -29.7% vs refused -30.3% at n=87: selection inside
+    // that universe adds nothing). The launchpad lists every mint it created in
+    // creation order, with no placement fee, so it is the whole launch universe
+    // rather than a marketed slice. Both sources run tagged by origin so the
+    // calibration loop decides between them on evidence, not on argument.
+    if (solUsd > 0) {
+      const launchpad = await fetchLaunchpadCandidates(solUsd, signal)
+      const seen = new Set(candidates.map((c) => c.mint))
+      for (const c of launchpad) {
+        if (!seen.has(c.mint)) candidates.push(c)
+      }
+      // Remember every deployer we have ever seen mint a token. This is the
+      // input the deployer-history gate has never had, and it only exists
+      // because the launchpad names the creator.
+      for (const c of launchpad) {
+        if (c.creator) {
+          this.sql().exec(
+            "INSERT INTO creators (mint, creator, first_seen) VALUES (?, ?, ?) ON CONFLICT(mint) DO NOTHING",
+            c.mint, c.creator, now,
+          )
+        }
+      }
+    }
+
     const open = this.openPositions()
 
     // Price and re-judge held tokens: union of fresh candidates and holdings.
@@ -455,6 +487,36 @@ export class Ledger extends DurableObject<Env> {
         mint: d.mint, eligible: d.eligible === 1, entered: d.entered === 1,
         forward_ret_pct: ret, died, ...JSON.parse(d.features) as Record<string, unknown>,
       })
+    }
+
+    // Deployer history, computed from OUR OWN labeled outcomes.
+    //
+    // This gate has read "unknown" since the system was built, because no feed
+    // sells deployer reputation. It becomes computable now only because the
+    // launchpad names the creator and we have been labeling what happened to
+    // every token we saw. Prior mints are counted from the creators table;
+    // rugs are counted from decisions we labeled died. Costs no network call:
+    // the corpus answers it.
+    for (const c of everything) {
+      const creator = c.creator ?? this.sql().exec<{ creator: string }>(
+        "SELECT creator FROM creators WHERE mint = ?", c.mint,
+      ).toArray()[0]?.creator
+      if (!creator) continue
+      const hist = this.sql().exec<{ prior: number; rugs: number }>(
+        `SELECT COUNT(*) AS prior,
+                SUM(CASE WHEN d.died = 1 THEN 1 ELSE 0 END) AS rugs
+         FROM creators cr
+         JOIN decisions d ON d.mint = cr.mint
+         WHERE cr.creator = ? AND cr.mint != ? AND d.labeled = 1`,
+        creator, c.mint,
+      ).one()
+      // Only assert history when we actually have some. Zero prior labeled
+      // mints stays undefined, never a passing "0 rugs" that would flatter an
+      // unknown deployer into looking proven.
+      if (hist.prior > 0) {
+        c.snapshot.deployerPriorMints = hist.prior
+        c.snapshot.deployerPriorRugs = hist.rugs ?? 0
+      }
     }
 
     // Holder concentration costs one call per token, so it is resolved only for

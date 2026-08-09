@@ -47,7 +47,7 @@ interface TokenRef {
 }
 
 /** Where discovery surfaced a mint. "boost" is PAID promotion. */
-export type DiscoveryOrigin = "profile" | "boost" | "both" | "held"
+export type DiscoveryOrigin = "profile" | "boost" | "both" | "held" | "launchpad"
 
 export interface Candidate {
   mint: string
@@ -63,6 +63,12 @@ export interface Candidate {
   origin: DiscoveryOrigin
   /** Pool account for the deepest venue; the key into the candle fetch. */
   pool: string | null
+  /**
+   * Deployer address, when the source provides it. The launchpad listing does;
+   * the promotional aggregator does not. This is the input the deployer-history
+   * gate has never had.
+   */
+  creator?: string | null
   priceUsd: number | null
   /** Percent change over the last hour, e.g. -12.4. */
   changeH1: number | null

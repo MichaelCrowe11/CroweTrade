@@ -1,0 +1,102 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "CroweTrade Engine (read-only)",
+    "version": "1.0.0",
+    "description": "Read surface of the CroweTrade paper-trading engine. GET only. Kill, veto and tick require a bearer token and are deliberately omitted so a conversation can never move the book."
+  },
+  "servers": [
+    {
+      "url": "https://crowetrade-engine.yellow-block-3adc.workers.dev"
+    }
+  ],
+  "paths": {
+    "/api/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Liveness and trading mode. mode is 'paper' while trading simulated capital.",
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "description": "Optional label for this read; the engine ignores it. Pass 'full' or omit.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/positions": {
+      "get": {
+        "operationId": "getPositions",
+        "summary": "Full operational state: cohorts (per policy version; the one with current=true is the ONLY one counting toward the funding criterion), stats (lifetime across all policies, NOT the funding number), calibration (avgForwardRetEnteredPct vs avgForwardRetEligibleSkippedPct is the decisive entered-vs-refused comparison), budget (caps, breaker, canEnter answers 'why isn't it trading'), open and closed positions, and events (recent decisions; entry_skipped carries the refusal reason).",
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "description": "Optional label for this read; the engine ignores it. Pass 'full' or omit.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/exit-sweep": {
+      "get": {
+        "operationId": "getExitSweep",
+        "summary": "Counterfactual replay of exit rules against recorded ticks. Results are UPPER BOUNDS ignoring price impact, useful only for RANKING rules against each other, never as achievable PnL. Always repeat that caveat when citing it.",
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "description": "Optional label for this read; the engine ignores it. Pass 'full' or omit.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
