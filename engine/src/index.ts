@@ -45,8 +45,14 @@ function ledger(env: Env) {
 
 export default {
   async scheduled(_event, env, _ctx): Promise<void> {
-    const result = await ledger(env).tick()
+    const stub = ledger(env)
+    const result = await stub.tick()
     console.log(JSON.stringify({ msg: "tick", ...result }))
+    // Checked every tick, fires at most once. Kept out of tick() so a mail
+    // provider outage can never fail a trade; awaited rather than left dangling
+    // so its log line lands inside this invocation.
+    const alert = await stub.maybeAlert()
+    if (alert.sent) console.log(JSON.stringify({ msg: "alert", ...alert }))
   },
 
   async fetch(req, env, _ctx): Promise<Response> {

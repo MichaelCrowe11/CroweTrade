@@ -41,6 +41,12 @@ import { fit } from "../../shared/model.js"
 import { quoteBuy, quoteSell, LAMPORTS_PER_SOL } from "./execution/jupiter.js"
 import { dryRunSwap } from "./execution/swap.js"
 import { capture } from "./posthog.js"
+import {
+  composeBody,
+  send as sendAlert,
+  READABLE_SAMPLE,
+  type OriginStat,
+} from "./alert.js"
 
 /** Slippage tolerance requested on every quote, entry and exit. */
 const SLIPPAGE_BPS = 300
@@ -326,6 +332,82 @@ export class Ledger extends DurableObject<Env> {
       // strategy assumed. This is the number the old model got wrong by 20x.
       exit_price_impact_pct: impact, exit_route: route, routed: q !== null,
     })
+  }
+
+  /** Labeled, non-voided outcome stats for one discovery origin. */
+  private originStat(origin: string): OriginStat {
+    const r = this.sql().exec<{
+      labeled: number | null; died: number | null
+      entered_ret: number | null; refused_ret: number | null
+    }>(
+      `SELECT SUM(CASE WHEN labeled = 1 THEN 1 ELSE 0 END) AS labeled,
+              SUM(CASE WHEN labeled = 1 AND died = 1 THEN 1 ELSE 0 END) AS died,
+              AVG(CASE WHEN labeled = 1 AND entered = 1 THEN forward_ret_pct END) AS entered_ret,
+              AVG(CASE WHEN labeled = 1 AND entered = 0 AND eligible = 1 THEN forward_ret_pct END) AS refused_ret
+       FROM decisions WHERE voided = 0 AND origin = ?`,
+      origin,
+    ).one()
+    return {
+      origin,
+      labeled: r.labeled ?? 0,
+      died: r.died ?? 0,
+      enteredRet: r.entered_ret,
+      refusedRet: r.refused_ret,
+    }
+  }
+
+  /**
+   * Email Michael once, when the launchpad comparison first becomes readable.
+   *
+   * Called after every tick. The state machine exists because this method both
+   * awaits network I/O and must never fire twice, and the DO input gate does
+   * not hold across an await (the same trap documented at the top of this file,
+   * which the tick lease exists to close). So the claim is written BEFORE the
+   * send: two overlapping ticks cannot both see an unclaimed alert. A claim
+   * older than ten minutes is treated as abandoned, which covers a Worker dying
+   * mid-send, and a failed send clears the claim so the next tick retries.
+   *
+   * Failure is swallowed into a return value. An unreachable mail provider must
+   * not take down the trading tick that called it.
+   */
+  async maybeAlert(): Promise<{ sent: boolean; reason: string }> {
+    const state = this.metaGet("launchpad_alert") ?? ""
+    if (state.startsWith("sent:")) return { sent: false, reason: "already sent" }
+    if (state.startsWith("pending:")) {
+      const since = Number(state.slice("pending:".length))
+      if (Date.now() - since < 10 * 60_000) return { sent: false, reason: "send in flight" }
+    }
+
+    const launchpad = this.originStat("launchpad")
+    if (launchpad.labeled < READABLE_SAMPLE) {
+      return { sent: false, reason: `launchpad ${launchpad.labeled}/${READABLE_SAMPLE} labeled` }
+    }
+
+    const apiKey = this.env.RESEND_API_KEY
+    if (!apiKey) return { sent: false, reason: "RESEND_API_KEY unset" }
+
+    this.metaSet("launchpad_alert", `pending:${Date.now()}`)
+
+    const { subject, text } = composeBody({
+      launchpad,
+      baseline: this.originStat("profile"),
+      killed: this.metaGet("kill") === "1",
+      breakerOpen: Number(this.metaGet("breaker_until") ?? 0) > Date.now(),
+      policyHash: this.metaGet("policy_hash"),
+    })
+
+    const result = await sendAlert(apiKey, subject, text)
+    if (!result.ok) {
+      // Clear the claim so the next tick tries again. Leaving it pending would
+      // trade a duplicate email for a silently lost one, which is the worse bug:
+      // nobody notices the alert that never arrives.
+      this.metaSet("launchpad_alert", "")
+      this.event("alert_failed", { error: result.error })
+      return { sent: false, reason: result.error }
+    }
+    this.metaSet("launchpad_alert", `sent:${Date.now()}`)
+    this.event("alert_sent", { subject, labeled: launchpad.labeled })
+    return { sent: true, reason: subject }
   }
 
   /** The autonomous trading tick. Runs once per cron minute. */
@@ -869,28 +951,35 @@ export class Ledger extends DurableObject<Env> {
               SUM(CASE WHEN labeled = 1 AND died = 1 THEN 1 ELSE 0 END) AS died,
               AVG(CASE WHEN labeled = 1 AND entered = 1 THEN forward_ret_pct END) AS entered_ret,
               AVG(CASE WHEN labeled = 1 AND entered = 0 AND eligible = 1 THEN forward_ret_pct END) AS skipped_ret
-       FROM decisions`,
+       FROM decisions WHERE voided = 0`,
     ).one()
 
     // Per-origin breakout. Adding a second discovery source is only an
     // experiment if the result can be read per source; a pooled average would
     // hide a good universe inside a bad one and vice versa. This is the readout
     // that says whether the launchpad move worked.
+    // `decisions` counts LIVE rows only. It previously counted voided ones too,
+    // which advertised 1583 launchpad decisions when roughly 1300 of them were
+    // quarantined price-scale wreckage. A sample size that includes rows the
+    // labeler refuses to touch is not a sample size, and reading it as one is
+    // exactly how the original bad launchpad claim got believed.
     const byOrigin = sql.exec<{
-      origin: string; n: number; labeled: number; died: number | null
+      origin: string; n: number; voided: number; labeled: number; died: number | null
       entered_n: number; entered_ret: number | null; refused_ret: number | null
     }>(
       `SELECT COALESCE(origin, 'unknown') AS origin,
-              COUNT(*) AS n,
-              SUM(labeled) AS labeled,
-              SUM(CASE WHEN labeled = 1 AND died = 1 THEN 1 ELSE 0 END) AS died,
-              SUM(CASE WHEN entered = 1 THEN 1 ELSE 0 END) AS entered_n,
-              AVG(CASE WHEN labeled = 1 AND entered = 1 THEN forward_ret_pct END) AS entered_ret,
-              AVG(CASE WHEN labeled = 1 AND entered = 0 AND eligible = 1 THEN forward_ret_pct END) AS refused_ret
+              SUM(CASE WHEN voided = 0 THEN 1 ELSE 0 END) AS n,
+              SUM(voided) AS voided,
+              SUM(CASE WHEN voided = 0 THEN labeled ELSE 0 END) AS labeled,
+              SUM(CASE WHEN voided = 0 AND labeled = 1 AND died = 1 THEN 1 ELSE 0 END) AS died,
+              SUM(CASE WHEN voided = 0 AND entered = 1 THEN 1 ELSE 0 END) AS entered_n,
+              AVG(CASE WHEN voided = 0 AND labeled = 1 AND entered = 1 THEN forward_ret_pct END) AS entered_ret,
+              AVG(CASE WHEN voided = 0 AND labeled = 1 AND entered = 0 AND eligible = 1 THEN forward_ret_pct END) AS refused_ret
        FROM decisions GROUP BY COALESCE(origin, 'unknown') ORDER BY n DESC`,
     ).toArray().map((r) => ({
       origin: r.origin,
       decisions: r.n,
+      voided: r.voided ?? 0,
       labeled: r.labeled ?? 0,
       entered: r.entered_n,
       deathRate: (r.labeled ?? 0) > 0 ? Number((((r.died ?? 0) / (r.labeled ?? 1))).toFixed(3)) : null,
@@ -903,7 +992,7 @@ export class Ledger extends DurableObject<Env> {
     // distribution is the only way to tell which.
     const skipReasons = sql.exec<{ reason: string; n: number }>(
       `SELECT COALESCE(skip_reason, 'eligible') AS reason, COUNT(*) AS n
-       FROM decisions GROUP BY COALESCE(skip_reason, 'eligible') ORDER BY n DESC`,
+       FROM decisions WHERE voided = 0 GROUP BY COALESCE(skip_reason, 'eligible') ORDER BY n DESC`,
     ).toArray().map((r) => ({ reason: r.reason, count: r.n }))
 
     return {
@@ -932,6 +1021,29 @@ export class Ledger extends DurableObject<Env> {
         avgForwardRetEnteredPct: cal.entered_ret,
         avgForwardRetEligibleSkippedPct: cal.skipped_ret,
       },
+      // Alert plumbing, exposed for the same reason the skip reasons are: a
+      // notification nobody receives and nobody can see failing is worse than
+      // no notification, because it is silently trusted. The send path itself
+      // is unverified (no test send was made), so `lastError` is the only thing
+      // that will say so, and it needs somewhere to be read.
+      alert: (() => {
+        const state = this.metaGet("launchpad_alert") ?? ""
+        const lp = byOrigin.find((o) => o.origin === "launchpad")
+        const failure = sql.exec<{ data: string }>(
+          "SELECT data FROM events WHERE kind = 'alert_failed' ORDER BY at DESC LIMIT 1",
+        ).toArray()[0]
+        return {
+          state: state.startsWith("sent:")
+            ? "sent"
+            : state.startsWith("pending:")
+              ? "sending"
+              : "waiting",
+          labeled: lp?.labeled ?? 0,
+          needed: READABLE_SAMPLE,
+          configured: Boolean(this.env.RESEND_API_KEY),
+          lastError: failure ? (JSON.parse(failure.data) as { error?: string }).error : null,
+        }
+      })(),
       // Recent decisions, including rejections. The engine already recorded why
       // it declined each candidate; not exposing that made a silent engine
       // indistinguishable from a broken one.
