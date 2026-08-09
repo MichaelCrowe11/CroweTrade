@@ -35,9 +35,11 @@ import {
   decideExits,
   type OpenPosition,
   type Trajectory,
+  type ModelRefusal,
 } from "./strategy.js"
 import { computeFeatures } from "../../shared/features.js"
-import { fit } from "../../shared/model.js"
+import { fit, score, buildFeatureVector, type FeatureSnapshot } from "../../shared/model.js"
+import { ARMED_MODEL } from "../../shared/armed-model.js"
 import { quoteBuy, quoteSell, LAMPORTS_PER_SOL } from "./execution/jupiter.js"
 import { dryRunSwap } from "./execution/swap.js"
 import { capture } from "./posthog.js"
@@ -195,6 +197,15 @@ export class Ledger extends DurableObject<Env> {
         )
       } catch {
         // Nothing to void.
+      }
+      // The armed model's probability at decision time, recorded on EVERY
+      // decision (entered or refused), so live calibration stays checkable:
+      // predicted probability vs what the label said, on data the model
+      // could not have trained on.
+      try {
+        sql.exec("ALTER TABLE decisions ADD COLUMN model_prob REAL")
+      } catch {
+        // Column already present.
       }
       this.schemaReady = true
     }
@@ -613,10 +624,11 @@ export class Ledger extends DurableObject<Env> {
         : null
 
       this.sql().exec(
-        `INSERT INTO decisions (mint, at, symbol, price, origin, verdict, features, eligible, skip_reason)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO decisions (mint, at, symbol, price, origin, verdict, features, eligible, skip_reason, model_prob)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         c.mint, now, c.symbol, c.priceUsd, c.origin, verdict,
         JSON.stringify(feats), skipReason === null ? 1 : 0, skipReason,
+        this.armedProbFor(c.mint, feats, c.origin, now),
       )
     }
 
@@ -787,7 +799,49 @@ export class Ledger extends DurableObject<Env> {
         })
       }
 
-      const entries = decideEntries(candidates, this.openPositions(), spentToday, solUsd, policy, now, trajectories)
+      // Armed-model probabilities, from the same six-tick window the decision
+      // snapshot uses. A candidate without enough of our own tape gets null,
+      // and null does not pass an armed gate — unknown is never a pass.
+      const modelProbs = new Map<string, number | null>()
+      if (policy.entry.minModelProb !== null) {
+        for (const c of candidates) {
+          const rows = this.sql().exec<{
+            price: number | null; liquidity_usd: number | null
+            buys_24h: number | null; sells_24h: number | null
+          }>(
+            "SELECT price, liquidity_usd, buys_24h, sells_24h FROM ticks WHERE mint = ? ORDER BY at DESC LIMIT 6",
+            c.mint,
+          ).toArray().reverse()
+          if (rows.length < policy.entry.minObservedTicks) {
+            modelProbs.set(c.mint, null)
+            continue
+          }
+          const feats = computeFeatures({
+            prices: rows.map((r) => r.price ?? 0),
+            liquidity: rows.map((r) => r.liquidity_usd ?? 0),
+            buys24h: rows.map((r) => r.buys_24h ?? 0),
+            sells24h: rows.map((r) => r.sells_24h ?? 0),
+          })
+          modelProbs.set(c.mint, this.armedProbFor(c.mint, feats, c.origin, now))
+        }
+      }
+
+      const modelRefusals: ModelRefusal[] = []
+      const entries = decideEntries(candidates, this.openPositions(), spentToday, solUsd, policy, now, trajectories, modelProbs, modelRefusals)
+      // A few named examples plus a count: enough to see WHO the model is
+      // refusing and how often, without an event per refusal flooding the log.
+      for (const r of modelRefusals.slice(0, 5)) {
+        this.event("entry_skipped", {
+          symbol: r.symbol, mint: r.mint, reason: "model probability below minimum",
+          prob: r.prob === null ? null : Number(r.prob.toFixed(3)),
+        })
+      }
+      if (modelRefusals.length > 5) {
+        this.event("entry_skipped", {
+          reason: "model probability below minimum",
+          additional: modelRefusals.length - 5,
+        })
+      }
       for (const e of entries) {
         const c = e.candidate
         if (c.priceUsd === null || c.liquidityUsd === null) continue
@@ -849,6 +903,7 @@ export class Ledger extends DurableObject<Env> {
         this.event("entry", {
           id, symbol: c.symbol, mint: c.mint, sizeSol: e.sizeSol, entryPrice,
           verdict: e.verdict, impact: q.priceImpactPct, route: q.route,
+          modelProb: e.modelProb === null ? null : Number(e.modelProb.toFixed(3)),
         })
         capture(this.env, this.ctx, "paper_entry", {
           symbol: c.symbol, mint: c.mint, size_sol: e.sizeSol, entry_price: entryPrice,
@@ -856,6 +911,7 @@ export class Ledger extends DurableObject<Env> {
           policy_hash: hash,
           entry_price_impact_pct: q.priceImpactPct, entry_route: q.route,
           sim_units_consumed: sim.unitsConsumed, priority_fee_lamports: sim.priorityFeeLamports,
+          model_prob: e.modelProb,
         })
         // Accumulate against a running total, not the pre-loop snapshot: the
         // previous form wrote spentToday + thisSize on every iteration, so a
@@ -1075,6 +1131,24 @@ export class Ledger extends DurableObject<Env> {
    * mark, whereas real exits pay impact. Treat these as upper bounds and rank
    * rules against each other, never as achievable PnL.
    */
+  /**
+   * Armed-model probability for a mint from the SAME inputs training used:
+   * computeFeatures over our own tape, measured liquidity from the nearest
+   * tick in the three minutes before `at`, origin flag. One vector builder
+   * serves training and this call — drift between the two is train/serve
+   * skew, the failure mode that is silent until the live record diverges
+   * from every backtest.
+   */
+  private armedProbFor(mint: string, feats: FeatureSnapshot, origin: string, at: number): number {
+    const liq = this.sql().exec<{ liquidity_usd: number | null }>(
+      `SELECT liquidity_usd FROM ticks
+       WHERE mint = ? AND at <= ? AND at >= ? AND liquidity_usd IS NOT NULL
+       ORDER BY at DESC LIMIT 1`,
+      mint, at, at - 180_000,
+    ).toArray()[0]?.liquidity_usd ?? null
+    return score(ARMED_MODEL, buildFeatureVector(feats, liq, origin === "launchpad"))
+  }
+
   exitSweep(): unknown {
     const sql = this.sql()
     const positions = sql.exec<{
@@ -1193,19 +1267,9 @@ export class Ledger extends DurableObject<Env> {
 
     const training = rows.map((r) => {
       const f = JSON.parse(r.features) as Record<string, number | null>
-      const liqKnown = r.liq_usd !== null && r.liq_usd > 0 ? 1 : 0
       return {
         at: r.at,
-        features: [
-          f["netFlowShare"] ?? 0,
-          f["flowAccel"] ?? 0,
-          f["priceProgressPct"] ?? 0,
-          f["liqTrendPct"] ?? 0,
-          f["ticks"] ?? 0,
-          liqKnown ? Math.log10(1 + (r.liq_usd as number)) : 0,
-          liqKnown,
-          r.origin === "launchpad" ? 1 : 0,
-        ],
+        features: buildFeatureVector(f, r.liq_usd, r.origin === "launchpad"),
         label: ((r.forward_ret_pct ?? 0) > COST_HURDLE_PCT ? 1 : 0) as 0 | 1,
       }
     })

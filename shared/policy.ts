@@ -73,6 +73,22 @@ export interface PolicyEnvelope {
      * Confirmation from what we watched happen, not what a listing claims.
      */
     minObservedTicks: number
+    /**
+     * Minimum armed-model probability to enter; null = no model gate.
+     *
+     * The probability estimates P(30-min forward return clears the 6%
+     * round-trip cost hurdle). An UNCOMPUTABLE probability blocks entry when
+     * the gate is armed — unknown never passes, same as every safety gate.
+     * The model sits BEHIND the gates and can only refuse, never override:
+     * a hard veto stays a hard veto whatever the model believes.
+     */
+    minModelProb: number | null
+    /**
+     * Identity of the exact frozen weights (shared/armed-model.ts). In the
+     * envelope so that swapping models rolls the policy hash: a record earned
+     * under one model must never quietly continue under another.
+     */
+    modelFingerprint: string | null
   }
 
   /**
@@ -153,6 +169,19 @@ export const PAPER_POLICY: PolicyEnvelope = {
     maxEntryImpactPct: 1.5,
     excludeBoosted: true,
     minObservedTicks: 3,
+    /**
+     * Armed 2026-08-09. The exit sweep closed the other door: the shipped
+     * exit rule beat every alternative including no-stop, so entry selection
+     * is the only lever left, and the unfiltered baseline is a measured
+     * money-loser (52 closes, -$103.79 at arming time). 0.2 selects the
+     * reliability bucket that observed a ~24% hit rate against a 5.8% base —
+     * the first measured selection power this system has produced. Entries
+     * will be far rarer on purpose; this cohort tests quality over volume
+     * against the baseline cohort's record, the same head-to-head shape as
+     * launchpad vs promotional.
+     */
+    minModelProb: 0.2,
+    modelFingerprint: "m20260809-5743r-auc802",
   },
   breaker: {
     consecutiveStopLimit: 4,

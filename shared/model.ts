@@ -50,6 +50,56 @@ export interface TrainingRow {
   label: 0 | 1
 }
 
+/**
+ * THE single definition of the feature vector, used by training and by the
+ * live entry gate. Two extractors drifting apart is train/serve skew, the
+ * silent failure mode this codebase already caught once between backtest and
+ * live pricing — so there is exactly one.
+ *
+ * priceProgressPct and liqTrendPct are clamped: tick windows that spanned the
+ * graduated-coin pricing artifact carried progress figures in the millions of
+ * percent, and standardising over those inflated the feature's std ~30,000x —
+ * every honest value then standardised to ~0 and the feature went dead. A real
+ * six-minute window lives comfortably inside ±500%; anything outside is a
+ * data fault, not information.
+ */
+export interface FeatureSnapshot {
+  ticks?: number | null
+  netFlowShare?: number | null
+  flowAccel?: number | null
+  priceProgressPct?: number | null
+  liqTrendPct?: number | null
+}
+
+/**
+ * The armed-gate predicate. Unknown never passes: an uncomputable probability
+ * on an armed gate blocks, exactly as an unknown safety gate does. Unarmed
+ * (null threshold) passes everything — the gate does not exist yet.
+ */
+export function passesModelGate(minProb: number | null, prob: number | null): boolean {
+  if (minProb === null) return true
+  return prob !== null && prob >= minProb
+}
+
+export function buildFeatureVector(
+  f: FeatureSnapshot,
+  liqUsd: number | null,
+  isLaunchpad: boolean,
+): number[] {
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+  const liqKnown = liqUsd !== null && liqUsd > 0 ? 1 : 0
+  return [
+    f.netFlowShare ?? 0,
+    f.flowAccel ?? 0,
+    clamp(f.priceProgressPct ?? 0, -100, 500),
+    clamp(f.liqTrendPct ?? 0, -100, 500),
+    f.ticks ?? 0,
+    liqKnown ? Math.log10(1 + (liqUsd as number)) : 0,
+    liqKnown,
+    isLaunchpad ? 1 : 0,
+  ]
+}
+
 export interface ModelFit {
   weights: number[]
   bias: number

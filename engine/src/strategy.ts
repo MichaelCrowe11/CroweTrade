@@ -12,6 +12,7 @@
 
 import type { Candidate } from "../../shared/dexscreener.js"
 import { evaluateGates, combineVerdict, type Verdict } from "../../shared/gates.js"
+import { passesModelGate } from "../../shared/model.js"
 import type { PolicyEnvelope } from "../../shared/policy.js"
 
 export interface OpenPosition {
@@ -31,6 +32,19 @@ export interface EntryDecision {
   candidate: Candidate
   verdict: Verdict
   sizeSol: number
+  /** Armed-model probability at entry time; null when the gate is unarmed. */
+  modelProb: number | null
+}
+
+/** A candidate that passed every other entry check and was refused by the
+ *  model gate alone. Surfaced because an autonomous system must expose why it
+ *  declined to act — the silent-403 incident is the standing lesson. */
+export interface ModelRefusal {
+  mint: string
+  symbol: string
+  /** null = probability was not computable (insufficient own-tape); when the
+   *  gate is armed, uncomputable blocks, same as any unknown. */
+  prob: number | null
 }
 
 export interface ExitDecision {
@@ -69,6 +83,10 @@ export function decideEntries(
   policy: PolicyEnvelope,
   now: number,
   trajectories: Map<string, Trajectory>,
+  /** Armed-model probabilities per mint; absent/null = not computable. */
+  modelProbs?: Map<string, number | null>,
+  /** OUT: candidates the model gate alone refused, for observability. */
+  modelRefusals?: ModelRefusal[],
 ): EntryDecision[] {
   const held = new Set(open.map((p) => p.mint))
   const minRank = VERDICT_RANK[policy.entry.minVerdict]
@@ -103,10 +121,20 @@ export function decideEntries(
     const verdict = combineVerdict(evaluateGates(c.snapshot))
     if (VERDICT_RANK[verdict] < minRank) continue
 
+    // Model gate LAST, behind every safety check, so a refusal here means
+    // "would have entered but for the model" — the exact population whose
+    // forward returns test whether the model earns its keep. It can only
+    // refuse; nothing it says overrides a gate.
+    const modelProb = modelProbs?.get(c.mint) ?? null
+    if (policy.entry.minModelProb !== null && !passesModelGate(policy.entry.minModelProb, modelProb)) {
+      modelRefusals?.push({ mint: c.mint, symbol: c.symbol, prob: modelProb })
+      continue
+    }
+
     // Clear tokens get full envelope size, caution gets half: the policy's
     // "buy blind small, never blind big" made arithmetic.
     const sizeSol = verdict === "clear" ? policy.perTradeCapSol : policy.perTradeCapSol / 2
-    out.push({ candidate: c, verdict, sizeSol })
+    out.push({ candidate: c, verdict, sizeSol, modelProb })
     budgetSol -= sizeSol
     slots -= 1
   }
