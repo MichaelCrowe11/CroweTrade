@@ -380,6 +380,34 @@ export class Ledger extends DurableObject<Env> {
     }
     const everything = [...candidates, ...heldPairs]
 
+    // Jupiter fallback pricing for tokens DexScreener cannot see.
+    //
+    // Fresh bonding-curve mints have no DexScreener pair for their first
+    // minutes, so the pair-based follow-up returns nothing for them, their
+    // ticks go stale, and the labeler calls them dead. That produced a 100%
+    // death rate for launchpad-origin decisions on the first readout -- a
+    // measurement artifact, not a market fact: a token with no pair still
+    // quotes fine on Jupiter, which is the venue we would actually trade
+    // through. Pricing the gap here keeps both cohorts observable, which is
+    // the same failure the external audit caught in a different form.
+    const priced = new Set(everything.map((c) => c.mint))
+    const blind = [...new Set([...open.map((p) => p.mint), ...pendingLabel])]
+      .filter((m) => !priced.has(m))
+      .slice(0, 12) // bounded: one quote each, against the subrequest budget
+
+    for (const mint of blind) {
+      const decimals = Number(this.metaGet(`decimals:${mint}`) ?? "6")
+      const q = await quoteBuy(mint, 0.1, SLIPPAGE_BPS)
+      if (!q) continue // genuinely unroutable: no buyer, and THAT is a death
+      const tokensOut = Number(q.outAmount) / 10 ** decimals
+      if (tokensOut <= 0) continue
+      const priceUsd = (0.1 * solUsd) / tokensOut
+      this.sql().exec(
+        "INSERT INTO ticks (mint, at, price, liquidity_usd, buys_24h, sells_24h, origin) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        mint, now, priceUsd, null, null, null, "jupiter-probe",
+      )
+    }
+
     // One RPC batch resolves authorities for the whole universe this tick.
     const facts = await fetchMintFacts(everything.map((c) => c.mint), signal).catch(
       () => new Map<string, MintFacts>(),
@@ -478,7 +506,15 @@ export class Ledger extends DurableObject<Env> {
         : null
       // Dead = we stopped seeing it, its pool bled out, or it lost ~everything.
       // Disappearing from every feed IS the modal death and must count as one.
-      const died = stale || (last?.liquidity_usd ?? 0) < 500 || (ret !== null && ret <= -90)
+      // Thin-liquidity death only counts when liquidity was actually MEASURED.
+      // A Jupiter probe tick carries a price but no liquidity figure, and
+      // treating that null as "under $500" would mark every bonding-curve
+      // token dead for the crime of being priced by quote instead of by pair.
+      const liqKnown = last?.liquidity_usd !== null && last?.liquidity_usd !== undefined
+      const died =
+        stale ||
+        (liqKnown && (last?.liquidity_usd ?? 0) < 500) ||
+        (ret !== null && ret <= -90)
       this.sql().exec(
         "UPDATE decisions SET labeled = 1, forward_ret_pct = ?, died = ?, labeled_at = ? WHERE mint = ?",
         ret, died ? 1 : 0, now, d.mint,
@@ -782,11 +818,47 @@ export class Ledger extends DurableObject<Env> {
        FROM decisions`,
     ).one()
 
+    // Per-origin breakout. Adding a second discovery source is only an
+    // experiment if the result can be read per source; a pooled average would
+    // hide a good universe inside a bad one and vice versa. This is the readout
+    // that says whether the launchpad move worked.
+    const byOrigin = sql.exec<{
+      origin: string; n: number; labeled: number; died: number | null
+      entered_n: number; entered_ret: number | null; refused_ret: number | null
+    }>(
+      `SELECT COALESCE(origin, 'unknown') AS origin,
+              COUNT(*) AS n,
+              SUM(labeled) AS labeled,
+              SUM(CASE WHEN labeled = 1 AND died = 1 THEN 1 ELSE 0 END) AS died,
+              SUM(CASE WHEN entered = 1 THEN 1 ELSE 0 END) AS entered_n,
+              AVG(CASE WHEN labeled = 1 AND entered = 1 THEN forward_ret_pct END) AS entered_ret,
+              AVG(CASE WHEN labeled = 1 AND entered = 0 AND eligible = 1 THEN forward_ret_pct END) AS refused_ret
+       FROM decisions GROUP BY COALESCE(origin, 'unknown') ORDER BY n DESC`,
+    ).toArray().map((r) => ({
+      origin: r.origin,
+      decisions: r.n,
+      labeled: r.labeled ?? 0,
+      entered: r.entered_n,
+      deathRate: (r.labeled ?? 0) > 0 ? Number((((r.died ?? 0) / (r.labeled ?? 1))).toFixed(3)) : null,
+      avgForwardRetEnteredPct: r.entered_ret === null ? null : Number(r.entered_ret.toFixed(1)),
+      avgForwardRetRefusedPct: r.refused_ret === null ? null : Number(r.refused_ret.toFixed(1)),
+    }))
+
+    // Why candidates are being turned away, counted. A gate that rejects
+    // almost everything is either protecting the book or blinding it, and the
+    // distribution is the only way to tell which.
+    const skipReasons = sql.exec<{ reason: string; n: number }>(
+      `SELECT COALESCE(skip_reason, 'eligible') AS reason, COUNT(*) AS n
+       FROM decisions GROUP BY COALESCE(skip_reason, 'eligible') ORDER BY n DESC`,
+    ).toArray().map((r) => ({ reason: r.reason, count: r.n }))
+
     return {
       mode: "paper",
       killed: this.metaGet("kill") === "1",
       policyHash: this.metaGet("policy_hash"),
       budget,
+      byOrigin,
+      skipReasons,
       calibration: {
         decisions: cal.decisions,
         labeled: cal.labeled ?? 0,
