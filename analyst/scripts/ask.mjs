@@ -1,79 +1,73 @@
 #!/usr/bin/env node
 /**
- * Ask the published CroweTrade Analyst a question and print its answer.
+ * Ask the CroweTrade Analyst a question.
  *
- * Exists because driving the Foundry threads/runs API through chained shell
- * one-liners is quoting hell: the assistant payload contains a multi-line
- * markdown system prompt, and one bad capture turns every later curl into a
- * parse error that looks like an API failure but is not.
+ * Uses /openai/v1/responses with the agent's instructions and tools sent
+ * inline. That route is the one that works; the legacy Assistants API
+ * (/assistants) force-stamps `temperature` and `top_p`, the gpt-5.x family
+ * rejects both, and with a tool attached the rejection surfaces as a generic
+ * "server_error" with empty run steps -- which cost hours of chasing a phantom
+ * tool bug. Run scripts/setup.mjs first; it verifies all of this.
  *
- * Usage: AZ_TOKEN=$(az account get-access-token --resource https://ai.azure.com \
- *          --query accessToken -o tsv) node scripts/ask.mjs "your question"
+ * Usage:
+ *   export AZ_TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
+ *   node scripts/ask.mjs "why did it skip PEPE?"
  */
 
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
+import { dirname, join } from "node:path"
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const EP = "https://crowelm-prod-eastus2.services.ai.azure.com/api/projects/crowelm-foundry"
-const AID = process.env.CT_AGENT_ID ?? "asst_TNm2vmK8klo6LWtFRkm9vzmG"
-const API = "api-version=v1"
+const MODEL = process.env.CT_MODEL ?? "gpt-5.6-sol"
+
 const token = process.env.AZ_TOKEN
 if (!token) {
-  console.error("AZ_TOKEN missing")
+  console.error("AZ_TOKEN missing. Run:")
+  console.error("  export AZ_TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)")
   process.exit(1)
-}
-
-const H = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
-
-async function call(path, init = {}) {
-  const res = await fetch(`${EP}${path}${path.includes("?") ? "&" : "?"}${API}`, { headers: H, ...init })
-  const text = await res.text()
-  try {
-    return JSON.parse(text)
-  } catch {
-    throw new Error(`non-JSON from ${path}: ${res.status} ${text.slice(0, 200)}`)
-  }
 }
 
 const question = process.argv.slice(2).join(" ") || "How are we doing? Give me the honest read."
 
-const thread = await call("/threads", { method: "POST", body: "{}" })
-if (!thread.id) throw new Error(`no thread: ${JSON.stringify(thread).slice(0, 200)}`)
-
-await call(`/threads/${thread.id}/messages`, {
+const res = await fetch(`${EP}/openai/v1/responses`, {
   method: "POST",
-  body: JSON.stringify({ role: "user", content: question }),
+  headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  body: JSON.stringify({
+    model: MODEL,
+    instructions: readFileSync(join(ROOT, "agent/instructions.md"), "utf8"),
+    tools: [{
+      type: "openapi",
+      openapi: {
+        name: "crowetrade_engine_read",
+        description: "Read-only access to the live CroweTrade engine.",
+        auth: { type: "anonymous" },
+        spec: JSON.parse(readFileSync(join(ROOT, "config/engine-openapi.json"), "utf8")),
+      },
+    }],
+    input: question,
+  }),
 })
 
-let run = await call(`/threads/${thread.id}/runs`, {
-  method: "POST",
-  body: JSON.stringify({ assistant_id: AID }),
-})
-if (!run.id) throw new Error(`no run: ${JSON.stringify(run).slice(0, 300)}`)
-
-const deadline = Date.now() + 240_000
-while (!["completed", "failed", "expired", "cancelled", "requires_action"].includes(run.status)) {
-  if (Date.now() > deadline) throw new Error("timed out waiting for run")
-  await new Promise((r) => setTimeout(r, 4000))
-  run = await call(`/threads/${thread.id}/runs/${run.id}`)
-}
-
-console.log(`run: ${run.status}`)
-if (run.status !== "completed") {
-  console.log("error:", JSON.stringify(run.last_error))
-  // Surface which tools it tried, since a tool failure and a model failure look
-  // identical from the run status alone.
-  const steps = await call(`/threads/${thread.id}/runs/${run.id}/steps`)
-  for (const s of steps.data ?? []) {
-    console.log(` step ${s.type} ${s.status}`, JSON.stringify(s.last_error ?? ""))
-  }
+if (!res.ok) {
+  console.error(`HTTP ${res.status}`)
+  console.error((await res.text()).slice(0, 600))
   process.exit(1)
 }
 
-const steps = await call(`/threads/${thread.id}/runs/${run.id}/steps`)
-const tools = (steps.data ?? []).flatMap((s) =>
-  (s.step_details?.tool_calls ?? []).map((t) => t.function?.name ?? t.type),
-)
-console.log(`tools called: ${tools.length ? tools.join(", ") : "NONE"}`)
+const body = await res.json()
 
-const msgs = await call(`/threads/${thread.id}/messages`)
-const answer = (msgs.data ?? []).find((m) => m.role === "assistant")
-console.log("\n--- answer ---\n")
-console.log((answer?.content ?? []).map((c) => c.text?.value).join("\n"))
+// An answer with no tool call is the model talking from its prompt rather than
+// from the ledger. Surface that rather than letting it pass as grounded.
+const calls = (body.output ?? [])
+  .filter((o) => o.type !== "message" && o.type !== "reasoning")
+  .map((o) => o.name ?? o.type)
+console.log(calls.length ? `[engine consulted: ${calls.join(", ")}]\n` : "[WARNING: answered without consulting the engine]\n")
+
+console.log(
+  (body.output ?? [])
+    .filter((o) => o.type === "message")
+    .flatMap((o) => (o.content ?? []).map((c) => c.text))
+    .join("\n"),
+)

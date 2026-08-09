@@ -46,19 +46,46 @@ of inventing plausible ones, and carrying the exit sweep's upper-bound caveat.
 A regression there is not a quality dip. It is a system that can flatter its own
 losing record, which is the one failure that would make this project worthless.
 
-## Publishing
+## Setup
 
-The workspace is complete and its tools are verified against the live engine.
-Publishing to the Foundry project requires the portal (this Azure deployment's
-data-plane API version rejects agent-create over CLI, the same trap documented
-for `crowe-product-description-writer`):
+One command. It checks prerequisites, discovers which models can serve the
+analyst, registers the agent, and verifies it end to end against the live
+engine:
 
-1. Foundry portal, project `crowelm-foundry` on hub `crowelm-prod-eastus2`.
-2. New agent, name `crowetrade-analyst`.
-3. Paste `agent/instructions.md` as instructions.
-4. Actions, add OpenAPI tool, upload `config/engine-openapi.yaml`, auth: none.
-5. Temperature 0.2.
-6. Run the honesty suite before enabling anywhere.
+```
+node scripts/setup.mjs          # check, register, verify
+node scripts/setup.mjs --check  # prerequisites only, changes nothing
+```
+
+## Using it
+
+```
+export AZ_TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
+node scripts/ask.mjs "how are we doing?"
+node scripts/ask.mjs "why did it skip PEPE?"
+node scripts/ask.mjs "which exit rule looks best, and what is the caveat?"
+```
+
+Every answer is prefixed with which engine endpoints it consulted. An answer
+that reports `answered without consulting the engine` is the model talking from
+its prompt rather than the ledger, and should not be trusted.
+
+## The blocker that was NOT a platform limit
+
+This was blocked for hours on a misleading error, and the cause is worth
+recording because nothing about it is discoverable from the message.
+
+The legacy Assistants API (`/assistants`) **force-stamps `temperature` and
+`top_p` onto every agent**, defaulting them when omitted and ignoring `null` on
+update. The gpt-5.x family **rejects both parameters outright**. With a tool
+attached, that specific rejection surfaces as a generic
+`server_error: Sorry, something went wrong` with **empty run steps**, which
+looks exactly like a broken OpenAPI tool. Stripping `tools` to `[]` reveals the
+real message instantly; that is the diagnostic.
+
+The fix is the modern route, `/openai/v1/responses`, which has no sampling
+fields at all and works with gpt-5.6-sol. Anthropic models remain unavailable
+on the agent path here (`invalid_deployment`); they are chat-completions only.
 
 ## Verified live
 
