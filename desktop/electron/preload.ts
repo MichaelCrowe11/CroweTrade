@@ -51,6 +51,13 @@ contextBridge.exposeInMainWorld("crowetrade", {
     },
   },
 
+  workflows: {
+    list: (): Promise<unknown[]> => ipcRenderer.invoke("wf:list"),
+    delete: (id: string): Promise<void> => ipcRenderer.invoke("wf:delete", id),
+    /** Replays the steps visibly; resolves with the run result line. */
+    run: (id: string): Promise<string> => ipcRenderer.invoke("wf:run", id),
+  },
+
   browser: {
     ensure: (id: string, url: string): Promise<boolean> =>
       ipcRenderer.invoke("browser:ensure", id, url),

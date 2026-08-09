@@ -12,6 +12,7 @@ import { Workspace, CloseIcon } from "./shell/Workspace.js"
 import { AnalystPanel } from "./shell/AnalystPanel.js"
 import { BrowserPanel } from "./shell/BrowserPanel.js"
 import { Orchestrator } from "./shell/Orchestrator.js"
+import { WorkflowsPanel } from "./shell/WorkflowsPanel.js"
 import { usePanels, type Panel } from "./shell/panels.js"
 import { DURATIONS, EASINGS, MAGNITUDES } from "./shell/motion.js"
 import { describeEvent, type EngineEvent } from "./engine/events.js"
@@ -761,6 +762,8 @@ export default function App() {
                 return renderBook()
               case "calibration":
                 return renderCalibration()
+              case "workflows":
+                return <WorkflowsPanel />
               case "browser":
                 return renderBrowser(panel)
             }

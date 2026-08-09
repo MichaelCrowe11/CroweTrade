@@ -4,6 +4,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import { createSseParser } from "./sse"
 import { runOrchestrator, stopOrchestrator } from "./orchestrator"
+import { listWorkflows, deleteWorkflow, runWorkflow } from "./workflows"
 
 /**
  * Candle fetch lives in the main process for two reasons: GeckoTerminal sends
@@ -378,6 +379,19 @@ void app.whenReady().then(() => {
 
   ipcMain.handle("orch:stop", () => {
     stopOrchestrator()
+  })
+
+  ipcMain.handle("wf:list", () => listWorkflows())
+
+  ipcMain.handle("wf:delete", (_e, id: unknown) => {
+    if (typeof id !== "string") return
+    deleteWorkflow(id)
+    win?.webContents.send("orch:event", { kind: "wf-changed" })
+  })
+
+  ipcMain.handle("wf:run", async (_e, id: unknown) => {
+    if (typeof id !== "string") return "invalid id"
+    return runWorkflow(id, (evt) => win?.webContents.send("orch:event", evt))
   })
 
   ipcMain.handle("candles", async (_e, pool: unknown) => {

@@ -1279,6 +1279,76 @@ body {
 
 .calib__ops { font-size: 10px; color: var(--clm-muted); }
 
+/* ── Workflow shelf ──────────────────────────────────────────────────────────
+ * Model-authored programs the operator keeps. Cards, not a node graph:
+ * workflows here are linear and literal, so the honest picture is the step
+ * list. Step chips wear the terminal's glyphs ($, >>>, []). */
+
+.wfl { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; }
+
+.wfl__card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--clm-line);
+  border-top-color: var(--clm-hair-top);
+  border-radius: var(--clm-r-lg);
+  background: var(--clm-raised);
+  box-shadow: var(--clm-z1);
+}
+
+.wfl__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.wfl__name { font-family: var(--clm-font-display); font-size: var(--clm-fs-body); font-weight: 600; }
+.wfl__meta { font-size: 10px; letter-spacing: 0.12em; color: var(--clm-muted); }
+
+.wfl__desc { margin: 0; font-size: var(--clm-fs-sm); color: var(--clm-muted); line-height: 1.55; }
+
+.wfl__steps { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.wfl__step {
+  padding: 3px 9px;
+  border: 1px solid var(--clm-line);
+  border-radius: var(--clm-r-pill);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--clm-muted);
+  background: var(--clm-panel);
+}
+.wfl__step--command { color: var(--clm-gold); border-color: color-mix(in srgb, var(--clm-gold) 30%, transparent); }
+.wfl__step--python { color: var(--clm-blue); }
+.wfl__step--panels { color: var(--clm-ink); }
+
+.wfl__foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.wfl__status { font-size: 10px; color: var(--clm-muted); }
+.wfl__actions { display: flex; gap: 8px; }
+
+.wfl__run {
+  padding: 6px 14px;
+  border: 1px solid var(--clm-gold-deep);
+  border-radius: var(--clm-r-md);
+  background: transparent;
+  color: var(--clm-gold);
+  font: inherit;
+  font-size: var(--clm-fs-sm);
+  cursor: pointer;
+}
+.wfl__run:hover:not(:disabled) { background: var(--clm-accent-wash); }
+.wfl__run:disabled { opacity: 0.4; cursor: default; }
+
+.wfl__delete {
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--clm-r-md);
+  background: transparent;
+  color: var(--clm-muted);
+  font: inherit;
+  font-size: var(--clm-fs-sm);
+  cursor: pointer;
+}
+.wfl__delete:hover { color: var(--clm-down); }
+.wfl__delete--armed { color: var(--clm-lamp-fail); border-color: var(--clm-lamp-fail); }
+
 /* ── Analyst drawer ──────────────────────────────────────────────────────────
  * Docked between the rail and the workspace, Cortex's conversation-panel
  * pattern. It pushes the workspace rather than floating over it: browser

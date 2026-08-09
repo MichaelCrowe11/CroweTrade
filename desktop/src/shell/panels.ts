@@ -20,7 +20,14 @@ import { persist } from "zustand/middleware"
 import { migratePanelsV1, type StoredPanel } from "./migrate.js"
 import { planArrangement } from "./arrange.js"
 
-export type PanelType = "scan" | "chart" | "gates" | "book" | "calibration" | "browser"
+export type PanelType =
+  | "scan"
+  | "chart"
+  | "gates"
+  | "book"
+  | "calibration"
+  | "workflows"
+  | "browser"
 
 export interface Panel {
   id: string
@@ -38,6 +45,7 @@ export const PANEL_LABELS: Record<PanelType, string> = {
   gates: "Gates",
   book: "Book",
   calibration: "Calibration",
+  workflows: "Workflows",
   browser: "Browser",
 }
 
@@ -54,6 +62,7 @@ const SINGLE_INSTANCE: ReadonlySet<PanelType> = new Set<PanelType>([
   "gates",
   "book",
   "calibration",
+  "workflows",
 ])
 
 interface PanelsState {

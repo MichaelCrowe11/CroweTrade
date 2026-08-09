@@ -28,6 +28,11 @@ interface Window {
       stop: () => Promise<void>
       onEvent: (cb: (e: Record<string, unknown>) => void) => () => void
     }
+    workflows?: {
+      list: () => Promise<unknown[]>
+      delete: (id: string) => Promise<void>
+      run: (id: string) => Promise<string>
+    }
     browser?: {
       ensure: (id: string, url: string) => Promise<boolean>
       setBounds: (

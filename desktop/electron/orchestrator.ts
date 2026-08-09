@@ -1,7 +1,7 @@
-import { spawn, execFileSync, type ChildProcess } from "node:child_process"
-import * as os from "node:os"
-import * as path from "node:path"
+import { execFileSync } from "node:child_process"
 import { createSseParser } from "./sse"
+import { runCommand, runPython, stopExec, type Emit as ExecEmit } from "./exec"
+import { saveWorkflow, listWorkflows, runWorkflow } from "./workflows"
 
 /**
  * The Orchestrator: an agent harness that runs the terminal, visibly.
@@ -50,7 +50,15 @@ Rules, non-negotiable:
 - Prefer small, inspectable commands over long compound ones. Never sudo.
 - When the operator asks for a workspace ("show me the book and the browser"),
   use arrange_layout with a sensible row split rather than opening panels one
-  at a time.`
+  at a time.
+- run_python executes a python3 script for analysis and research; print what
+  matters, the operator watches the terminal.
+- WORKFLOWS are saved, named, linear programs the operator keeps on the
+  Workflows panel. Steps are literal and independent: kind "command"
+  {command}, kind "python" {code}, kind "panels" {rows}. There is NO
+  templating between steps; chain inside a step with pipes if needed. When
+  the operator asks to keep, save, or reuse a procedure, save_workflow it,
+  then confirm what you saved. run_workflow replays one by name, visibly.`
 
 interface FnTool {
   type: "function"
@@ -119,60 +127,67 @@ const TOOLS: FnTool[] = [
     description: "Return the workspace to the default scan | chart | gates layout.",
     parameters: { type: "object", properties: {} },
   },
+  {
+    type: "function",
+    name: "run_python",
+    description:
+      "Run a python3 script on the operator's machine for analysis or research. Output streams to the visible terminal; you receive the exit code and output tail. 120s timeout.",
+    parameters: {
+      type: "object",
+      properties: { code: { type: "string", description: "The python source to run." } },
+      required: ["code"],
+    },
+  },
+  {
+    type: "function",
+    name: "save_workflow",
+    description:
+      "Save a named workflow to the operator's Workflows panel. Steps are literal and run in order; a failing step stops the run. No templating between steps. Saving an existing name updates it.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        description: { type: "string" },
+        steps: {
+          type: "array",
+          description:
+            'Each step is one of: {"kind":"command","command":"..."}, {"kind":"python","code":"..."}, {"kind":"panels","rows":[["book","calibration"]]}.',
+          items: { type: "object" },
+        },
+      },
+      required: ["name", "steps"],
+    },
+  },
+  {
+    type: "function",
+    name: "list_workflows",
+    description: "List the saved workflows: names, descriptions, step counts, last results.",
+    parameters: { type: "object", properties: {} },
+  },
+  {
+    type: "function",
+    name: "run_workflow",
+    description: "Run a saved workflow by name. Its steps execute visibly in the terminal.",
+    parameters: {
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    },
+  },
 ]
 
 export interface OrchEvent {
-  kind: "assistant_delta" | "tool_call" | "term" | "panels" | "round" | "done" | "error"
+  kind: string
   [key: string]: unknown
 }
 
-type Emit = (e: OrchEvent) => void
+type Emit = ExecEmit
 
-let currentChild: ChildProcess | null = null
 let stopped = false
 
 export function stopOrchestrator(): void {
   stopped = true
-  currentChild?.kill("SIGKILL")
-}
-
-function defaultCwd(): string {
-  return path.join(os.homedir(), "Projects/crowetrade/desktop")
-}
-
-function runCommand(command: string, cwd: string | undefined, emit: Emit): Promise<string> {
-  if (/(^|\s)sudo(\s|$)/.test(command)) {
-    const line = "refused: sudo is not available to the orchestrator\n"
-    emit({ kind: "term", text: `$ ${command}\n${line}` })
-    return Promise.resolve(line.trim())
-  }
-  emit({ kind: "term", text: `$ ${command}\n` })
-  return new Promise((resolve) => {
-    const child = spawn("/bin/zsh", ["-lc", command], { cwd: cwd || defaultCwd() })
-    currentChild = child
-    let out = ""
-    const timer = setTimeout(() => child.kill("SIGKILL"), COMMAND_TIMEOUT_MS)
-    const push = (buf: Buffer) => {
-      const s = buf.toString()
-      out += s
-      emit({ kind: "term", text: s })
-    }
-    child.stdout?.on("data", push)
-    child.stderr?.on("data", push)
-    child.on("error", (e) => {
-      clearTimeout(timer)
-      currentChild = null
-      const msg = `spawn failed: ${e.message}\n`
-      emit({ kind: "term", text: msg })
-      resolve(msg.trim())
-    })
-    child.on("close", (code) => {
-      clearTimeout(timer)
-      currentChild = null
-      emit({ kind: "term", text: `[exit ${code ?? "killed"}]\n` })
-      resolve(`exit ${code ?? "killed"}\n${out.slice(-4000)}`)
-    })
-  })
+  stopExec()
 }
 
 interface FnCall {
@@ -276,6 +291,25 @@ export async function runOrchestrator(goal: string, emit: Emit): Promise<{ text:
           typeof args["cwd"] === "string" ? args["cwd"] : undefined,
           emit,
         )
+      } else if (call.name === "run_python" && typeof args["code"] === "string") {
+        result = await runPython(args["code"], emit)
+      } else if (call.name === "save_workflow") {
+        const saved = saveWorkflow(args, "orchestrator")
+        result = saved.ok
+          ? `saved workflow '${saved.workflow.name}' with ${saved.workflow.steps.length} step(s)`
+          : `refused: ${saved.reason}`
+        emit({ kind: "wf-changed" })
+      } else if (call.name === "list_workflows") {
+        result = JSON.stringify(
+          listWorkflows().map((w) => ({
+            name: w.name,
+            description: w.description,
+            steps: w.steps.length,
+            lastResult: w.lastResult ?? "never run",
+          })),
+        )
+      } else if (call.name === "run_workflow" && typeof args["name"] === "string") {
+        result = await runWorkflow(args["name"], emit)
       } else if (call.name === "arrange_layout") {
         emit({ kind: "panels", action: "arrange", rows: args["rows"] })
       } else if (call.name === "open_panel") {

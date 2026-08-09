@@ -61,6 +61,14 @@ const ICONS: Record<RailKey, JSX.Element> = {
       <path d="M19 5.5v5M15 13.5v5" stroke="var(--clm-gold)" />
     </>
   ),
+  // Workflows: a saved program, input node wired to a lit output.
+  workflows: (
+    <>
+      <rect x="4" y="4" width="6" height="5" rx="1" />
+      <path d="M7 9v5a2 2 0 002 2h5" />
+      <circle cx="17" cy="16" r="2.4" fill="var(--clm-gold)" stroke="none" />
+    </>
+  ),
   // Analyst: the assistant mark, a conversation with a live word in it.
   analyst: (
     <>
@@ -98,6 +106,7 @@ const ORDER: RailKey[] = [
   "gates",
   "book",
   "calibration",
+  "workflows",
   "analyst",
   "browser",
 ]
