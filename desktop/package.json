@@ -11,7 +11,7 @@
     "build": "tsc -p electron/tsconfig.json && vite build",
     "build:mac": "npm run build && electron-builder --mac",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p electron/tsconfig.json",
-    "test": "node --test --experimental-strip-types 'src/**/*.test.ts'"
+    "test": "node --test --experimental-strip-types 'src/**/*.test.ts' 'electron/**/*.test.ts'"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

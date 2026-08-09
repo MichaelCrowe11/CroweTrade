@@ -21,6 +21,8 @@ interface Window {
     platform?: string
     candles?: (pool: string) => Promise<number[][]>
     ask?: (question: string) => Promise<{ text: string; consulted: string[] }>
+    onAskDelta?: (cb: (delta: string) => void) => () => void
+    onAskTool?: (cb: (name: string) => void) => () => void
     browser?: {
       ensure: (id: string, url: string) => Promise<boolean>
       setBounds: (

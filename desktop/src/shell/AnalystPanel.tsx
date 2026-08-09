@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from "react"
 import { motion } from "motion/react"
 import { DURATIONS, EASINGS, MAGNITUDES } from "./motion.js"
+import { AIAvatarSwirl, type SwirlState } from "./AIAvatarSwirl.js"
+import { segmentInline } from "./markdown.js"
 
 /**
  * The Analyst: ask the system about itself, in the same window as the book.
@@ -11,6 +13,12 @@ import { DURATIONS, EASINGS, MAGNITUDES } from "./motion.js"
  * decoration -- an answer that did not consult the engine is the model talking
  * from its prompt, and on a surface where people read numbers to decide things,
  * an ungrounded answer must look different from a grounded one.
+ *
+ * The identity is the AIAvatarSwirl, and per the house rule its motion is tied
+ * to LIVE streaming: deltas paint as they arrive from the main process, engine
+ * reads surface the moment they happen (grounding visible in real time, not
+ * disclosed after the fact), and the swirl's storm state follows what the
+ * Analyst is actually doing. The reveal cadence is Cortex's AnswerStream.
  *
  * Read-only by construction. The Analyst holds three GET operations and no
  * credentials; kill, veto and policy changes need a bearer token it does not
@@ -31,20 +39,88 @@ const SUGGESTIONS = [
   "Which exit rule looks best, and what is the caveat?",
 ]
 
+/* Cortex AnswerStream cadence: reveal toward the streamed buffer at a fixed
+ * tick so bursty network chunks still read as steady writing. */
+const REVEAL_INTERVAL_MS = 12
+const CHARS_PER_TICK = 2
+
+function useTypewriter(target: string): string {
+  const [shown, setShown] = useState("")
+  useEffect(() => {
+    if (target === "") {
+      setShown("")
+      return
+    }
+    if (shown.length >= target.length) return
+    const t = window.setInterval(() => {
+      setShown((d) => {
+        if (d.length >= target.length) {
+          window.clearInterval(t)
+          return d
+        }
+        return target.slice(0, d.length + CHARS_PER_TICK)
+      })
+    }, REVEAL_INTERVAL_MS)
+    return () => window.clearInterval(t)
+  }, [target, shown.length])
+  return shown
+}
+
+/** "crowetrade_engine_read_getPositions" reads as "getPositions" on screen. */
+function toolLabel(name: string): string {
+  return name.replace(/^crowetrade_engine_read_/, "")
+}
+
+/** The Analyst's inline markdown subset, rendered; unclosed markers stay literal. */
+function AnswerText({ text }: { text: string }) {
+  return (
+    <>
+      {segmentInline(text).map((seg, i) =>
+        seg.kind === "strong" ? (
+          <strong key={i}>{seg.text}</strong>
+        ) : seg.kind === "code" ? (
+          <code key={i} className="mono turn__code">
+            {seg.text}
+          </code>
+        ) : (
+          <span key={i}>{seg.text}</span>
+        ),
+      )}
+    </>
+  )
+}
+
 export function AnalystPanel({ mint }: { mint?: string | null }) {
   const [turns, setTurns] = useState<Turn[]>([])
   const [draft, setDraft] = useState("")
   const [busy, setBusy] = useState(false)
+  const [live, setLive] = useState("")
+  const [liveTools, setLiveTools] = useState<string[]>([])
   const endRef = useRef<HTMLDivElement>(null)
+
+  const shown = useTypewriter(live)
+
+  useEffect(() => {
+    const offDelta = window.crowetrade?.onAskDelta?.((d) => setLive((t) => t + d))
+    const offTool = window.crowetrade?.onAskTool?.((n) => setLiveTools((t) => [...t, n]))
+    return () => {
+      offDelta?.()
+      offTool?.()
+    }
+  }, [])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
-  }, [turns])
+  }, [turns, shown])
+
+  const swirlState: SwirlState = !busy ? "idle" : live === "" ? "thinking" : "responding"
 
   async function ask(question: string) {
     if (!question.trim() || busy) return
     setDraft("")
     setBusy(true)
+    setLive("")
+    setLiveTools([])
     setTurns((t) => [...t, { role: "you", text: question }, { role: "analyst", text: "", pending: true }])
 
     try {
@@ -66,6 +142,8 @@ export function AnalystPanel({ mint }: { mint?: string | null }) {
       ])
     } finally {
       setBusy(false)
+      setLive("")
+      setLiveTools([])
     }
   }
 
@@ -74,10 +152,13 @@ export function AnalystPanel({ mint }: { mint?: string | null }) {
       <div className="analyst__transcript">
         {turns.length === 0 && (
           <div className="analyst__empty">
-            <p className="analyst__hint">
-              Ask about the book, a refusal, or the record. Answers are read from
-              the live engine, not recalled.
-            </p>
+            <div className="analyst__hero">
+              <AIAvatarSwirl state="idle" size={64} />
+              <span className="analyst__name">CroweTrade Analyst</span>
+              <span className="analyst__tagline">
+                reads the live engine, answers grounded or says it is not
+              </span>
+            </div>
             <div className="analyst__suggest">
               {SUGGESTIONS.map((s) => (
                 <button key={s} type="button" className="analyst__chip" onClick={() => ask(s)}>
@@ -105,12 +186,42 @@ export function AnalystPanel({ mint }: { mint?: string | null }) {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: DURATIONS.quick, ease: EASINGS.snap }}
           >
-            <span className="turn__who mono">{t.role === "you" ? "YOU" : "ANALYST"}</span>
+            <span className="turn__who mono">
+              {t.role === "analyst" && (
+                <AIAvatarSwirl state={t.pending ? swirlState : "idle"} size={20} storm="active" />
+              )}
+              {t.role === "you" ? "YOU" : "ANALYST"}
+            </span>
+
             {t.pending ? (
-              <span className="turn__thinking">
-                reading the ledger
-                <span className="turn__dots" aria-hidden="true" />
-              </span>
+              <>
+                {liveTools.length > 0 && (
+                  <span className="turn__grounded mono">
+                    {liveTools.map((n, j) => (
+                      <span key={j} className="turn__read">
+                        reading {toolLabel(n)}
+                      </span>
+                    ))}
+                  </span>
+                )}
+                {shown === "" ? (
+                  <span className="turn__thinking">
+                    reading the ledger
+                    <span className="turn__dots" aria-hidden="true" />
+                  </span>
+                ) : (
+                  <p className="turn__text">
+                    <AnswerText text={shown} />
+                    <motion.span
+                      className="turn__caret"
+                      animate={{ opacity: [1, 0.2, 1] }}
+                      transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut" }}
+                    >
+                      |
+                    </motion.span>
+                  </p>
+                )}
+              </>
             ) : (
               <>
                 {t.consulted !== undefined && (
@@ -118,11 +229,13 @@ export function AnalystPanel({ mint }: { mint?: string | null }) {
                     className={`turn__grounded mono ${t.consulted.length ? "" : "turn__grounded--none"}`}
                   >
                     {t.consulted.length
-                      ? `engine consulted: ${t.consulted.join(", ")}`
+                      ? `engine consulted: ${t.consulted.map(toolLabel).join(", ")}`
                       : "answered without consulting the engine"}
                   </span>
                 )}
-                <p className="turn__text">{t.text}</p>
+                <p className="turn__text">
+                  <AnswerText text={t.text} />
+                </p>
               </>
             )}
           </motion.div>

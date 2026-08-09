@@ -2,6 +2,7 @@ import { app, BrowserWindow, WebContentsView, ipcMain, session, shell } from "el
 import { execFileSync } from "node:child_process"
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { createSseParser } from "./sse"
 
 /**
  * Candle fetch lives in the main process for two reasons: GeckoTerminal sends
@@ -25,7 +26,21 @@ const ANALYST_MODEL = "gpt-5.6-sol"
  * The token comes from `az account get-access-token`, so the operator's own
  * Azure login is the auth: no key is stored in the app at all.
  */
-async function askAnalyst(question: string): Promise<{ text: string; consulted: string[] }> {
+/**
+ * Streaming: the response arrives as SSE and every text delta is forwarded to
+ * the renderer the moment it lands, so the Analyst speaks the way Cortex's
+ * conversation surface does instead of holding its breath for the whole
+ * answer. Tool invocations stream too (response.output_item.added), which is
+ * grounding made visible in real time: the operator watches the Analyst read
+ * the engine before it speaks. Event vocabulary verified against the live
+ * endpoint: output_text.delta carries text; output_item.added carries
+ * openapi_call items; completed closes the stream.
+ */
+async function askAnalyst(
+  question: string,
+  onDelta: (text: string) => void,
+  onTool: (name: string) => void,
+): Promise<{ text: string; consulted: string[] }> {
   const token = execFileSync(
     "az",
     ["account", "get-access-token", "--resource", "https://ai.azure.com", "--query", "accessToken", "-o", "tsv"],
@@ -49,21 +64,42 @@ async function askAnalyst(question: string): Promise<{ text: string; consulted: 
         },
       }],
       input: question,
+      stream: true,
     }),
   })
-  if (!res.ok) throw new Error(`analyst ${res.status}: ${(await res.text()).slice(0, 160)}`)
-
-  const body = (await res.json()) as { output?: { type?: string; name?: string; content?: { text?: string }[] }[] }
-  const out = body.output ?? []
-  return {
-    consulted: out
-      .filter((o) => o.type !== "message" && o.type !== "reasoning")
-      .map((o) => o.name ?? o.type ?? "tool"),
-    text: out
-      .filter((o) => o.type === "message")
-      .flatMap((o) => (o.content ?? []).map((c) => c.text ?? ""))
-      .join("\n"),
+  if (!res.ok || !res.body) {
+    throw new Error(`analyst ${res.status}: ${(await res.text()).slice(0, 160)}`)
   }
+
+  const parser = createSseParser()
+  const decoder = new TextDecoder()
+  const consulted: string[] = []
+  let text = ""
+  let failure: string | null = null
+
+  for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+    for (const evt of parser.push(decoder.decode(chunk, { stream: true }))) {
+      if (evt.type === "response.output_text.delta") {
+        const delta = evt["delta"]
+        if (typeof delta === "string") {
+          text += delta
+          onDelta(delta)
+        }
+      } else if (evt.type === "response.output_item.added") {
+        const item = evt["item"] as { type?: string; name?: string } | undefined
+        if (item && item.type !== "message" && item.type !== "reasoning") {
+          const name = item.name ?? item.type ?? "tool"
+          consulted.push(name)
+          onTool(name)
+        }
+      } else if (evt.type === "response.failed" || evt.type === "error") {
+        failure = JSON.stringify(evt).slice(0, 200)
+      }
+    }
+  }
+
+  if (failure) throw new Error(`analyst stream failed: ${failure}`)
+  return { text, consulted }
 }
 
 const OHLCV = "https://api.geckoterminal.com/api/v2/networks/solana/pools"
@@ -242,6 +278,18 @@ function createWindow(): void {
         }
         return
       }
+      // Optional page-context driver: CROWETRADE_SHOT_JS runs after the app
+      // mounts, so a shot can exercise a real interaction (click a suggestion
+      // chip, submit a form) and photograph the result. Page-level, so it
+      // works even though shot windows ignore OS mouse events.
+      const shotJs = process.env["CROWETRADE_SHOT_JS"]
+      if (shotJs) {
+        setTimeout(() => {
+          void win?.webContents
+            .executeJavaScript(shotJs)
+            .catch((e: unknown) => console.error("shot-js failed:", e))
+        }, 2_000)
+      }
       setTimeout(() => {
         win?.webContents
           .capturePage()
@@ -296,7 +344,11 @@ void app.whenReady().then(() => {
       return { text: "empty question", consulted: [] }
     }
     try {
-      return await askAnalyst(question)
+      return await askAnalyst(
+        question,
+        (delta) => win?.webContents.send("analyst:delta", delta),
+        (name) => win?.webContents.send("analyst:tool", name),
+      )
     } catch (e) {
       // Surface the real reason: "analyst unavailable" sends someone hunting
       // when the answer is usually that `az login` expired.
