@@ -41,6 +41,12 @@
       "dist/**/*",
       "dist-electron/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "scripts/nb_runner.py",
+        "to": "scripts/nb_runner.py"
+      }
+    ],
     "mac": {
       "category": "public.app-category.finance",
       "target": [

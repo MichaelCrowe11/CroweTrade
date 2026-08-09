@@ -29,7 +29,12 @@ function kernelPython(): string | null {
 }
 
 function runnerScript(): string {
-  return path.join(__dirname, "../scripts/nb_runner.py")
+  // Packaged: the runner ships as an extraResource beside the asar, because
+  // python cannot read a file that lives inside one. isPackaged is legitimate
+  // here; it selects a resource location, not a dev server.
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "scripts/nb_runner.py")
+    : path.join(__dirname, "../scripts/nb_runner.py")
 }
 
 function resolveName(name: string): string | null {
