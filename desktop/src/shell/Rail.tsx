@@ -15,7 +15,7 @@ import { DURATIONS, EASINGS, MAGNITUDES } from "./motion.js"
  * conversation panel. Same button language, different destination.
  */
 
-type RailKey = PanelType | "analyst"
+type RailKey = PanelType | "analyst" | "orchestrator"
 
 const ICONS: Record<RailKey, JSX.Element> = {
   // Scan: a list.
@@ -60,6 +60,13 @@ const ICONS: Record<RailKey, JSX.Element> = {
       <path d="M20 12a7 7 0 01-7 7H8l-4 3v-5a7 7 0 017-9h2a7 7 0 017 4z" />
     </>
   ),
+  // Orchestrator: a prompt, because it runs the machine.
+  orchestrator: (
+    <>
+      <path d="M4 7l5 5-5 5" />
+      <path d="M12 17h8" />
+    </>
+  ),
   // Browser: a window with a chrome bar.
   browser: (
     <>
@@ -69,17 +76,36 @@ const ICONS: Record<RailKey, JSX.Element> = {
   ),
 }
 
-const LABELS: Record<RailKey, string> = { ...PANEL_LABELS, analyst: "Analyst" }
+const LABELS: Record<RailKey, string> = {
+  ...PANEL_LABELS,
+  analyst: "Analyst",
+  orchestrator: "Orchestrator",
+}
 
-const ORDER: RailKey[] = ["scan", "chart", "gates", "book", "calibration", "analyst", "browser"]
+const ORDER: RailKey[] = [
+  "orchestrator",
+  "scan",
+  "chart",
+  "gates",
+  "book",
+  "calibration",
+  "analyst",
+  "browser",
+]
+
+/** The two side surfaces share the dock; their buttons toggle, panels open. */
+const DOCK: ReadonlySet<RailKey> = new Set<RailKey>(["analyst", "orchestrator"])
 
 export function Rail() {
   const panels = usePanels((s) => s.panels)
   const analystOpen = usePanels((s) => s.analystOpen)
+  const orchestratorOpen = usePanels((s) => s.orchestratorOpen)
   const addPanel = usePanels((s) => s.addPanel)
   const toggleAnalyst = usePanels((s) => s.toggleAnalyst)
+  const toggleOrchestrator = usePanels((s) => s.toggleOrchestrator)
   const open = new Set<RailKey>(panels.map((p) => p.type))
   if (analystOpen) open.add("analyst")
+  if (orchestratorOpen) open.add("orchestrator")
 
   return (
     <nav className="rail" aria-label="Panels">
@@ -88,10 +114,18 @@ export function Rail() {
           key={key}
           type="button"
           className={`rail__btn ${open.has(key) ? "rail__btn--open" : ""}`}
-          onClick={() => (key === "analyst" ? toggleAnalyst() : addPanel(key))}
+          onClick={() =>
+            key === "analyst"
+              ? toggleAnalyst()
+              : key === "orchestrator"
+                ? toggleOrchestrator()
+                : addPanel(key)
+          }
           title={LABELS[key]}
-          aria-label={key === "analyst" ? "Toggle the Analyst drawer" : `Open ${LABELS[key]}`}
-          aria-pressed={key === "analyst" ? analystOpen : undefined}
+          aria-label={DOCK.has(key) ? `Toggle ${LABELS[key]}` : `Open ${LABELS[key]}`}
+          aria-pressed={
+            key === "analyst" ? analystOpen : key === "orchestrator" ? orchestratorOpen : undefined
+          }
           initial={{ opacity: 0, x: -MAGNITUDES.slide }}
           animate={{ opacity: 1, x: 0 }}
           transition={{

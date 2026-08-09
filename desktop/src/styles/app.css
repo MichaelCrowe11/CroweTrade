@@ -35,10 +35,12 @@ body {
 }
 
 .app {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   height: 100%;
 }
+
+.body { flex: 1 1 auto; }
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
 
@@ -47,8 +49,11 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  padding: 14px 20px 14px 88px; /* left inset clears the traffic lights */
-  border-bottom: 1px solid var(--clm-line);
+  padding: 13px 20px 13px 88px; /* left inset clears the traffic lights */
+  /* The brand rule: a gold-tinged hairline under the chrome, the one warm
+   * line on the frame. */
+  border-bottom: 1px solid color-mix(in srgb, var(--clm-gold) 26%, transparent);
+  background: linear-gradient(color-mix(in srgb, var(--clm-panel) 55%, var(--clm-cream)), var(--clm-cream));
   -webkit-app-region: drag;
 }
 
@@ -162,7 +167,7 @@ body {
 .scan__row:focus-visible { outline: 2px solid var(--clm-gold); outline-offset: -2px; }
 
 .scan__row[aria-selected="true"] {
-  background: var(--clm-raised);
+  background: var(--clm-accent-wash);
   border-left-color: var(--clm-gold);
   box-shadow: inset 0 1px 0 var(--clm-hair-top);
 }
@@ -298,7 +303,7 @@ body {
 
 .chart__head { display: flex; align-items: baseline; gap: 16px; }
 
-.chart__price { font-size: 22px; font-weight: 600; color: var(--clm-ink); }
+.chart__price { font-size: 26px; font-weight: 600; color: var(--clm-ink); }
 
 .chart__change { font-size: 12px; }
 .chart__change--up { color: var(--clm-up); }
@@ -623,6 +628,117 @@ body {
   color: var(--clm-blue);
 }
 
+/* ── Orchestrator console ────────────────────────────────────────────────────
+ * The pop-out agent surface above the workspace: conversation on the left,
+ * the machine on the right. The terminal lane is the one surface DARKER than
+ * the window ground, so the agent's actions read as happening in the machine
+ * layer beneath the instruments. */
+
+.orch {
+  flex: 0 0 440px;
+  width: 440px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin: 10px -2px 10px 12px;
+  background: var(--clm-panel);
+  border: 1px solid var(--clm-line);
+  border-top-color: var(--clm-hair-top);
+  border-radius: var(--clm-r-lg);
+  box-shadow: var(--clm-z2);
+  overflow: hidden;
+}
+
+.orch__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--clm-line);
+  background: color-mix(in srgb, var(--clm-raised) 55%, var(--clm-panel));
+}
+
+.orch__head .ws__act { opacity: 1; }
+
+.orch__conv {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.orch__transcript {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.orch__empty { display: flex; align-items: center; gap: 14px; padding: 6px 2px; }
+.orch__intro { display: flex; flex-direction: column; gap: 4px; }
+
+.orch__name {
+  font-family: var(--clm-font-display);
+  font-size: var(--clm-fs-body);
+  font-weight: 600;
+}
+
+.orch__hint {
+  font-size: var(--clm-fs-cap);
+  color: var(--clm-muted);
+  line-height: 1.6;
+  max-width: 44ch;
+}
+
+.orch__composer {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--clm-line);
+}
+
+/* Stopping a running agent is not sending a message; it wears the alarm
+ * border so the hand finds it without reading. */
+.orch__stop {
+  padding: 9px 16px;
+  border: 1px solid var(--clm-lamp-fail);
+  border-radius: var(--clm-r-md);
+  background: transparent;
+  color: var(--clm-lamp-fail);
+  font: inherit;
+  font-size: var(--clm-fs-sm);
+  cursor: pointer;
+}
+.orch__stop:hover { background: rgba(212, 87, 78, 0.12); }
+
+.orch__term {
+  margin: 0;
+  flex: 0 0 34%;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border-top: 1px solid var(--clm-line-strong);
+  background: var(--clm-term-bg);
+  color: var(--clm-term-fg);
+  font-size: var(--clm-fs-cap);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.orch__term::-webkit-scrollbar { width: 10px; }
+.orch__term::-webkit-scrollbar-track { background: transparent; }
+.orch__term::-webkit-scrollbar-thumb {
+  background: var(--clm-line-strong);
+  border-radius: var(--clm-r-pill);
+  border: 3px solid var(--clm-term-bg);
+}
+
 /* ── Engine strip ────────────────────────────────────────────────────────────
  * The glass-box status bar idiom from the desktop, carrying the one fact this
  * product exists to keep in view: what the engine is doing right now, and why
@@ -704,8 +820,8 @@ body {
  * as a set of buttons that all look equally unpressed. */
 .rail__btn--open {
   color: var(--clm-gold);
-  background: var(--clm-panel);
-  border-color: var(--clm-line);
+  background: var(--clm-accent-wash);
+  border-color: color-mix(in srgb, var(--clm-gold) 30%, transparent);
   border-top-color: var(--clm-hair-top);
 }
 
@@ -795,6 +911,9 @@ body {
   padding: 10px 14px;
   border-bottom: 1px solid var(--clm-line);
   border-top: 1px solid transparent;
+  /* The head is the card's bezel: a half-step brighter than the body so each
+   * instrument reads as capped, not just outlined. */
+  background: color-mix(in srgb, var(--clm-raised) 55%, var(--clm-panel));
 }
 
 .ws__title {
@@ -802,7 +921,7 @@ body {
   font-size: 10px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--clm-muted);
+  color: color-mix(in srgb, var(--clm-ink) 62%, var(--clm-muted));
 }
 
 .ws__acts { display: flex; gap: 2px; }

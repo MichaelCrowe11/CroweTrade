@@ -11,6 +11,7 @@ import { Rail } from "./shell/Rail.js"
 import { Workspace, CloseIcon } from "./shell/Workspace.js"
 import { AnalystPanel } from "./shell/AnalystPanel.js"
 import { BrowserPanel } from "./shell/BrowserPanel.js"
+import { Orchestrator } from "./shell/Orchestrator.js"
 import { usePanels, type Panel } from "./shell/panels.js"
 import { DURATIONS, EASINGS, MAGNITUDES } from "./shell/motion.js"
 import { describeEvent, type EngineEvent } from "./engine/events.js"
@@ -138,6 +139,8 @@ const VERDICT_NOTE: Record<Verdict, string> = {
 export default function App() {
   const analystOpen = usePanels((s) => s.analystOpen)
   const closeAnalyst = usePanels((s) => s.closeAnalyst)
+  const orchestratorOpen = usePanels((s) => s.orchestratorOpen)
+  const closeOrchestrator = usePanels((s) => s.closeOrchestrator)
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [solUsd, setSolUsd] = useState<number | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -708,12 +711,18 @@ export default function App() {
         </span>
       </header>
 
+
       <div className="body">
         <Rail />
-        {/* The Analyst pops out from the left edge beside the rail, Cortex's
-            conversation-panel pattern. It DOCKS rather than overlays: browser
-            panels are native views composited above this page, so anything
-            that floated over the workspace would render underneath them. */}
+        {/* The side surfaces pop out from the left edge beside the rail,
+            Cortex's pattern: the rail switches the surface, one at a time,
+            and switching collapses the other. They DOCK rather than overlay:
+            browser panels are native views composited above this page, so
+            anything that floated over the workspace would render underneath
+            them. */}
+        <AnimatePresence initial={false}>
+          {orchestratorOpen && <Orchestrator onCollapse={closeOrchestrator} />}
+        </AnimatePresence>
         <AnimatePresence initial={false}>
           {analystOpen && (
             <motion.aside

@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { createSseParser } from "./sse"
+import { runOrchestrator, stopOrchestrator } from "./orchestrator"
 
 /**
  * Candle fetch lives in the main process for two reasons: GeckoTerminal sends
@@ -362,6 +363,21 @@ void app.whenReady().then(() => {
       // when the answer is usually that `az login` expired.
       return { text: e instanceof Error ? e.message : String(e), consulted: [] }
     }
+  })
+
+  ipcMain.handle("orch:ask", async (_e, goal: unknown) => {
+    if (typeof goal !== "string" || !goal.trim()) return { text: "empty goal" }
+    try {
+      return await runOrchestrator(goal, (evt) => win?.webContents.send("orch:event", evt))
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      win?.webContents.send("orch:event", { kind: "error", message })
+      return { text: message }
+    }
+  })
+
+  ipcMain.handle("orch:stop", () => {
+    stopOrchestrator()
   })
 
   ipcMain.handle("candles", async (_e, pool: unknown) => {

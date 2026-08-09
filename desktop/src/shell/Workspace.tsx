@@ -25,6 +25,16 @@ import { DURATIONS, EASINGS, MAGNITUDES } from "./motion.js"
  * exiting child rendered, and a Group re-laying out its survivors does not.
  */
 
+/* Sensible opening proportions so a fresh row does not slice itself into
+ * equal thirds: lists and lamp grids start narrower, readouts wider. Types
+ * without an entry share the remainder equally. */
+const DEFAULT_SIZES: Partial<Record<Panel["type"], string>> = {
+  scan: "26%",
+  gates: "30%",
+  book: "36%",
+  calibration: "42%",
+}
+
 function SplitIcon() {
   // A panel with a rule through its middle: what splitting down produces.
   return (
@@ -71,7 +81,12 @@ export function Workspace({ render }: { render: (panel: Panel) => ReactNode }) {
   }, [splitFocusedDown])
 
   const renderPanel = (panel: Panel) => (
-    <SizePanel id={panel.id} minSize="15%" className="ws__panel">
+    <SizePanel
+      id={panel.id}
+      minSize="15%"
+      defaultSize={DEFAULT_SIZES[panel.type]}
+      className="ws__panel"
+    >
       <motion.div
         className={`ws__panelbox ${panel.focused ? "ws__panelbox--focused" : ""}`}
         // Clicking anywhere in a panel focuses it, so the next panel opened

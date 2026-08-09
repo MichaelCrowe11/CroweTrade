@@ -38,6 +38,19 @@ contextBridge.exposeInMainWorld("crowetrade", {
     return () => ipcRenderer.removeListener("analyst:tool", handler)
   },
 
+  orchestrator: {
+    /** Run the agent loop toward a goal. Resolves with its final prose. */
+    ask: (goal: string): Promise<{ text: string }> => ipcRenderer.invoke("orch:ask", goal),
+    /** Kill the loop and whatever command is running. */
+    stop: (): Promise<void> => ipcRenderer.invoke("orch:stop"),
+    /** Live events: assistant text, tool calls, terminal output, panel actions. */
+    onEvent: (cb: (e: Record<string, unknown>) => void): (() => void) => {
+      const handler = (_e: IpcRendererEvent, evt: Record<string, unknown>) => cb(evt)
+      ipcRenderer.on("orch:event", handler)
+      return () => ipcRenderer.removeListener("orch:event", handler)
+    },
+  },
+
   browser: {
     ensure: (id: string, url: string): Promise<boolean> =>
       ipcRenderer.invoke("browser:ensure", id, url),

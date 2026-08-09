@@ -23,6 +23,11 @@ interface Window {
     ask?: (question: string) => Promise<{ text: string; consulted: string[] }>
     onAskDelta?: (cb: (delta: string) => void) => () => void
     onAskTool?: (cb: (name: string) => void) => () => void
+    orchestrator?: {
+      ask: (goal: string) => Promise<{ text: string }>
+      stop: () => Promise<void>
+      onEvent: (cb: (e: Record<string, unknown>) => void) => () => void
+    }
     browser?: {
       ensure: (id: string, url: string) => Promise<boolean>
       setBounds: (
