@@ -205,6 +205,17 @@ body {
 /* Direction color: soft gold up, quiet red down. The down-red is dimmer than
  * the lamp fail red on purpose; a drawdown is information, an unsafe token is
  * an alarm, and they must not read at the same volume. */
+/* Origin tags. LP is the launchpad (whole launch universe); AD is paid
+ * promotion, which the policy refuses outright and which is dimmed rather
+ * than highlighted so it reads as a warning, not a feature. */
+.scan__origin {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--clm-gold-deep);
+}
+
+.scan__origin--paid { color: var(--clm-lamp-fail); opacity: 0.75; }
+
 .scan__change--up { color: var(--clm-gold-soft); }
 .scan__change--down { color: rgba(212, 87, 78, 0.78); }
 

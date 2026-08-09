@@ -233,6 +233,13 @@ export default function App() {
                 <span className={`scan__flag scan__flag--${flagFor(c)}`} aria-hidden="true" />
                 <span className="scan__age mono">
                   {age(c.createdAt, now)} / {usd(c.liquidityUsd)}
+                  {/* Which universe this came from. The promotional feeds and
+                      the launchpad are being measured against each other, so
+                      the operator should be able to see which is which. */}
+                  {c.origin === "launchpad" && <span className="scan__origin"> LP</span>}
+                  {(c.origin === "boost" || c.origin === "both") && (
+                    <span className="scan__origin scan__origin--paid"> AD</span>
+                  )}
                 </span>
                 {c.changeH1 !== null && (
                   <span className={`scan__change mono ${chUp ? "scan__change--up" : "scan__change--down"}`}>
