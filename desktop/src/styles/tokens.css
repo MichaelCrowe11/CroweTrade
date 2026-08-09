@@ -54,6 +54,10 @@
 
   --clm-accent-wash: rgba(210, 173, 98, 0.14);
   --clm-focus-halo: rgba(210, 173, 98, 0.22);
+  /* Ink on a gold fill, from the same canonical set. Primary actions FILL
+   * with gold per the crowelm recipe; ghost outlines are not the house
+   * primary. */
+  --clm-on-gold: #14110c;
 
   /* Radius, type and elevation scales ported from the Crowe Logic Desktop
    * renderer, which is the canonical source the crowelm.com tokens themselves

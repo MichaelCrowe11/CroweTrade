@@ -303,7 +303,7 @@ body {
 
 .chart__head { display: flex; align-items: baseline; gap: 16px; }
 
-.chart__price { font-size: 26px; font-weight: 600; color: var(--clm-ink); }
+.chart__price { font-size: var(--clm-fs-display); font-weight: 600; color: var(--clm-ink); }
 
 .chart__change { font-size: 12px; }
 .chart__change--up { color: var(--clm-up); }
@@ -417,7 +417,7 @@ body {
  * decoration; a panel where one thing glows is information. */
 .lamp--pass .lamp__led {
   background: var(--clm-lamp-pass);
-  box-shadow: 0 0 0 3px var(--clm-focus-halo);
+  box-shadow: 0 0 0 3px var(--clm-focus-halo), 0 0 14px 2px var(--clm-accent-wash);
 }
 
 .lamp--fail .lamp__led {
@@ -656,7 +656,7 @@ body {
   gap: 8px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--clm-line);
-  background: color-mix(in srgb, var(--clm-raised) 55%, var(--clm-panel));
+  background: var(--clm-raised);
 }
 
 .orch__head .ws__act { opacity: 1; }
@@ -857,10 +857,10 @@ body {
   height: 100%;
   min-height: 0;
   background: var(--clm-panel);
-  border: 1px solid var(--clm-line);
+  border: 1px solid var(--clm-line-strong);
   border-top-color: var(--clm-hair-top);
   border-radius: var(--clm-r-lg);
-  box-shadow: var(--clm-z1);
+  box-shadow: var(--clm-z2);
   overflow: hidden;
   transition: border-color var(--clm-dur) var(--clm-ease), box-shadow var(--clm-dur-slow) var(--clm-ease);
 }
@@ -913,7 +913,7 @@ body {
   border-top: 1px solid transparent;
   /* The head is the card's bezel: a half-step brighter than the body so each
    * instrument reads as capped, not just outlined. */
-  background: color-mix(in srgb, var(--clm-raised) 55%, var(--clm-panel));
+  background: var(--clm-raised);
 }
 
 .ws__title {
@@ -921,7 +921,7 @@ body {
   font-size: 10px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: color-mix(in srgb, var(--clm-ink) 62%, var(--clm-muted));
+  color: var(--clm-ink);
 }
 
 .ws__acts { display: flex; gap: 2px; }
@@ -1027,8 +1027,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform var(--clm-dur-slow) var(--clm-ease), opacity var(--clm-dur-slow) var(--clm-ease);
+  transition: opacity var(--clm-dur-slow) var(--clm-ease);
 }
+
+/* Alive at rest: the spiral turns slowly enough to read as growth, the
+ * crowelm whirl idea at instrument pace. */
+.swirl__mark svg { animation: swirl-spin 14s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .swirl__mark svg { animation: none; } }
 
 @keyframes swirl-spin {
   to { transform: rotate(360deg); }
@@ -1118,7 +1123,7 @@ body {
   display: block;
   margin: 0 0 9px;
   font-family: var(--clm-font-display);
-  font-size: var(--clm-fs-body);
+  font-size: 16px;
   font-weight: 560;
   line-height: 1.5;
   color: var(--clm-ink);
@@ -1139,7 +1144,7 @@ body {
   font-size: 12px;
   color: var(--clm-gold-soft);
 }
-.turn__text { margin: 0; font-size: var(--clm-fs-sm); line-height: 1.62; white-space: pre-wrap; user-select: text; }
+.turn__text { margin: 0; font-size: var(--clm-fs-body); line-height: 1.62; color: var(--clm-ink); white-space: pre-wrap; user-select: text; }
 
 /* Grounding is not decoration. An answer the model produced without reading
  * the ledger must not look like one it read, on a surface where people take
@@ -1168,16 +1173,19 @@ body {
 .analyst__input::placeholder { color: var(--clm-muted); opacity: 0.72; }
 
 .analyst__send {
-  padding: 9px 16px;
+  padding: 9px 18px;
   border: 1px solid var(--clm-gold-deep);
+  border-top-color: var(--clm-gold-soft);
   border-radius: var(--clm-r-md);
-  background: transparent;
-  color: var(--clm-gold);
+  background: var(--clm-gold);
+  color: var(--clm-on-gold);
   font: inherit;
   font-size: var(--clm-fs-sm);
+  font-weight: 600;
   cursor: pointer;
+  transition: background var(--clm-dur) var(--clm-ease);
 }
-.analyst__send:hover:not(:disabled) { background: var(--clm-accent-wash); }
+.analyst__send:hover:not(:disabled) { background: var(--clm-gold-soft); }
 .analyst__send:disabled { opacity: 0.4; cursor: default; }
 
 /* ── Calibration panel ───────────────────────────────────────────────────────
@@ -1286,7 +1294,13 @@ body {
  * workflows here are linear and literal, so the honest picture is the step
  * list. Step chips wear the terminal's glyphs ($, >>>, []). */
 
-.wfl { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; }
+.wfl {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+  padding: 14px 16px;
+  align-content: start;
+}
 
 .wfl__card {
   display: flex;
@@ -1326,16 +1340,19 @@ body {
 .wfl__actions { display: flex; gap: 8px; }
 
 .wfl__run {
-  padding: 6px 14px;
+  padding: 6px 16px;
   border: 1px solid var(--clm-gold-deep);
+  border-top-color: var(--clm-gold-soft);
   border-radius: var(--clm-r-md);
-  background: transparent;
-  color: var(--clm-gold);
+  background: var(--clm-gold);
+  color: var(--clm-on-gold);
   font: inherit;
   font-size: var(--clm-fs-sm);
+  font-weight: 600;
   cursor: pointer;
+  transition: background var(--clm-dur) var(--clm-ease);
 }
-.wfl__run:hover:not(:disabled) { background: var(--clm-accent-wash); }
+.wfl__run:hover:not(:disabled) { background: var(--clm-gold-soft); }
 .wfl__run:disabled { opacity: 0.4; cursor: default; }
 
 .wfl__delete {
