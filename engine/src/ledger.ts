@@ -150,6 +150,11 @@ export class Ledger extends DurableObject<Env> {
       } catch {
         // Column already present.
       }
+      try {
+        sql.exec("ALTER TABLE decisions ADD COLUMN voided INTEGER NOT NULL DEFAULT 0")
+      } catch {
+        // Column already present.
+      }
       // Quarantine the launchpad rows priced before the base-unit fix.
       //
       // total_supply arrives in base units, so decision-time prices were off by
@@ -159,9 +164,28 @@ export class Ledger extends DurableObject<Env> {
       // with a reason instead, so they stop counting and stay inspectable.
       try {
         sql.exec(
-          `UPDATE decisions SET labeled = 0, forward_ret_pct = NULL, died = NULL,
-                                skip_reason = COALESCE(skip_reason,'') || ' [voided: price-scale bug]'
-           WHERE origin = 'launchpad' AND labeled = 1 AND ABS(forward_ret_pct) > 1000`,
+          // Cut on PRICE, not on the return. The first pass voided only absurd
+          // returns and left rows that were equally wrong but quieter -- same
+          // bad price, no computable return, still poisoning any re-label.
+          // Buggy prices cluster near 1e-12 (market cap over BASE units) while
+          // correct ones sit near 1e-6, so 1e-9 separates them cleanly.
+          // Cut on TIME, not on price value.
+          //
+          // Threshold-chasing failed twice: a 1e-9 cut let rows at 4e-8
+          // through, and every widening is a guess about how wrong a wrong
+          // number was. The defensible statement is simpler: every launchpad
+          // row written before the base-unit fix deployed is untrustworthy,
+          // whatever it says. Post-fix rows accumulate clean from here.
+          //
+          // A PERMANENT flag, not labeled=0.
+          //
+          // The first version of this quarantine set labeled=0, which made the
+          // rows eligible for labeling again -- so the labeler immediately
+          // re-labeled them from the same bad price and re-corrupted the set.
+          // The quarantine was fighting the labeler and losing. `voided` is
+          // never cleared and the labeler skips it.
+          `UPDATE decisions SET voided = 1, labeled = 0, forward_ret_pct = NULL, died = NULL
+           WHERE origin = 'launchpad' AND voided = 0 AND at < 1786245220317`,
         )
       } catch {
         // Nothing to void.
@@ -383,7 +407,7 @@ export class Ledger extends DurableObject<Env> {
     // group on a technicality and make entered-vs-refused look decisive while
     // measuring nothing but which cohort we bothered to watch.
     const pendingLabel = this.sql().exec<{ mint: string }>(
-      "SELECT mint FROM decisions WHERE labeled = 0",
+      "SELECT mint FROM decisions WHERE labeled = 0 AND voided = 0",
     ).toArray().map((r) => r.mint)
 
     const inScan = new Set(candidates.map((c) => c.mint))
@@ -506,7 +530,7 @@ export class Ledger extends DurableObject<Env> {
     // for the calibrated edge model: features at decision time, then what the
     // market actually did. This is the dataset "crack the algorithm" needs.
     const toLabel = this.sql().exec<{ mint: string; price: number | null; features: string; eligible: number; entered: number }>(
-      "SELECT mint, price, features, eligible, entered FROM decisions WHERE labeled = 0 AND at <= ? LIMIT 20",
+      "SELECT mint, price, features, eligible, entered FROM decisions WHERE labeled = 0 AND voided = 0 AND at <= ? LIMIT 20",
       now - 30 * 60_000,
     ).toArray()
     for (const d of toLabel) {
@@ -883,12 +907,12 @@ export class Ledger extends DurableObject<Env> {
         // broken" — the same ambiguity that hid the simulate-403 for hours.
         oldestUnlabeledAgeMin: (() => {
           const r = sql.exec<{ at: number | null }>(
-            "SELECT MIN(at) AS at FROM decisions WHERE labeled = 0",
+            "SELECT MIN(at) AS at FROM decisions WHERE labeled = 0 AND voided = 0",
           ).one().at
           return r === null ? null : Math.round((Date.now() - r) / 60_000)
         })(),
         dueForLabel: sql.exec<{ n: number }>(
-          "SELECT COUNT(*) AS n FROM decisions WHERE labeled = 0 AND at <= ?",
+          "SELECT COUNT(*) AS n FROM decisions WHERE labeled = 0 AND voided = 0 AND at <= ?",
           Date.now() - 30 * 60_000,
         ).one().n,
         deathRate: (cal.labeled ?? 0) > 0 ? (cal.died ?? 0) / (cal.labeled ?? 1) : null,
