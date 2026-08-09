@@ -6,6 +6,10 @@ import { Annunciator } from "./components/Annunciator.js"
 import { PriceChart } from "./components/PriceChart.js"
 import { age, usd, shortMint } from "./components/format.js"
 import { Spark } from "./components/Spark.js"
+import { Rail } from "./shell/Rail.js"
+import { Workspace } from "./shell/Workspace.js"
+import { AnalystPanel } from "./shell/AnalystPanel.js"
+import type { Panel } from "./shell/panels.js"
 
 const REFRESH_MS = 20_000
 const ENGINE = "https://crowetrade-engine.yellow-block-3adc.workers.dev"
@@ -196,6 +200,175 @@ export default function App() {
     return v.kind === "ok" ? v.verdict : "insufficient-data"
   }, [])
 
+  // Panel renderers. Each is a self-contained readout so the workspace can
+  // place it anywhere without any of them knowing where they sit.
+
+  const renderScan = () => (
+    <>
+      {error && <p className="empty">{error}</p>}
+      {!error && candidates.length === 0 && <p className="empty">No candidates.</p>}
+      {candidates.map((c) => {
+        const chUp = (c.changeH1 ?? 0) >= 0
+        return (
+          <button
+            key={c.mint}
+            type="button"
+            className="scan__row"
+            aria-selected={c.mint === selected}
+            onClick={() => setSelected(c.mint)}
+          >
+            <span className="scan__symbol">{c.symbol}</span>
+            {c.changeH1 !== null && (
+              <span className={`scan__change mono ${chUp ? "scan__change--up" : "scan__change--down"}`}>
+                {chUp ? "+" : ""}
+                {c.changeH1.toFixed(1)}%
+              </span>
+            )}
+            <span className={`scan__flag scan__flag--${flagFor(c)}`} aria-hidden="true" />
+            <Spark points={trace.get(c.mint) ?? []} up={chUp} />
+            <span className="scan__age mono">
+              {age(c.createdAt, now)} / {usd(c.liquidityUsd)}
+              {c.origin === "launchpad" && <span className="scan__origin"> LP</span>}
+              {(c.origin === "boost" || c.origin === "both") && (
+                <span className="scan__origin scan__origin--paid"> AD</span>
+              )}
+            </span>
+          </button>
+        )
+      })}
+    </>
+  )
+
+  const renderPrimary = () => {
+    if (!active) return <p className="empty">Select a candidate.</p>
+    return (
+      <div className="primary">
+        <div className="primary__identity">
+          <div className="primary__titlerow">
+            <h1 className="primary__symbol">{active.symbol}</h1>
+            <span className="primary__venue mono">{active.dex}</span>
+          </div>
+          <span className="primary__name">
+            {active.name}
+            <span className="primary__mint mono"> / {shortMint(active.mint)}</span>
+          </span>
+        </div>
+        <PriceChart pool={active.pool} mint={active.mint} />
+        <Stat k="Price" v={usd(active.priceUsd)} />
+        <Stat k="Liquidity" v={usd(active.liquidityUsd)} />
+        <Pressure buys={active.buys24h} sells={active.sells24h} />
+      </div>
+    )
+  }
+
+  const renderGates = () => {
+    if (!active) return <p className="empty">Select a candidate.</p>
+    return (
+      <div className="primary">
+        {verdict?.kind === "ok" && (
+          <div className={`verdict verdict--${verdict.verdict}`}>
+            <span className="verdict__word">{verdict.verdict.replace("-", " ")}</span>
+            <span className="verdict__note">{VERDICT_NOTE[verdict.verdict]}</span>
+          </div>
+        )}
+        {verdict?.kind === "unset" && (
+          <div className="verdict verdict--unset">
+            <span className="verdict__word">policy unset</span>
+            <span className="verdict__note">gates below are live; the combination rule is not written yet</span>
+          </div>
+        )}
+        <Annunciator gates={gates} />
+      </div>
+    )
+  }
+
+  const renderBook = () => (
+    <div className="exec">
+      <div className="exec__row">
+        <span className="exec__key">ENGINE</span>
+        <span className={`exec__value ${engine ? "exec__value--observe" : ""}`}>
+          {engine ? (engine.killed ? "KILLED" : "TRADING") : "unreachable"}
+        </span>
+      </div>
+      {engine && (
+        <>
+          <div className="exec__row">
+            <span className="exec__key">OPEN</span>
+            <span className="exec__value">{engine.open.length}</span>
+          </div>
+          <div className="exec__row">
+            <span className="exec__key">CLOSED</span>
+            <span className="exec__value">{engine.stats.closedCount}</span>
+          </div>
+          <div className="exec__row">
+            <span className="exec__key">WIN RATE</span>
+            <span className="exec__value">
+              {engine.stats.winRate === null ? "--" : `${Math.round(engine.stats.winRate * 100)}%`}
+            </span>
+          </div>
+          <div className="exec__row">
+            <span className="exec__key">SIM PNL</span>
+            <span className={`exec__value ${engine.stats.totalPnlUsd >= 0 ? "exec__value--up" : "exec__value--down"}`}>
+              {`${engine.stats.totalPnlUsd >= 0 ? "+" : "-"}$${Math.abs(engine.stats.totalPnlUsd).toFixed(2)}`}
+            </span>
+          </div>
+          {engine.budget && (
+            <div className="exec__row">
+              <span className="exec__key">DAY SPEND</span>
+              <span className="exec__value">
+                {engine.budget.spentTodaySol.toFixed(2)} / {engine.budget.dailyCapSol} SOL
+              </span>
+            </div>
+          )}
+        </>
+      )}
+      {engine?.events && (
+        <div className="decisions">
+          {engine.events.slice(0, 14).map((e) => {
+            const v = describeEvent(e)
+            return (
+              <div key={`${e.at}-${v.label}`} className={`decision decision--${v.kind}`}>
+                <span className="decision__label mono">{v.label}</span>
+                <span className="decision__detail">{v.detail}</span>
+                <span className="decision__age mono">{age(e.at, now)}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+
+  /**
+   * Research panel. Opens the selected mint on a block explorer in the system
+   * browser rather than embedding a webview: an Electron webview loading
+   * arbitrary remote pages next to a trading surface is an attack surface, and
+   * the operator already has a real browser with their sessions in it.
+   */
+  const renderBrowser = () => (
+    <div className="research">
+      {!active && <p className="empty">Select a candidate.</p>}
+      {active && (
+        <>
+          <p className="research__hint">Look up {active.symbol} on chain.</p>
+          <div className="research__links">
+            {[
+              ["Solscan", `https://solscan.io/token/${active.mint}`],
+              ["DexScreener", `https://dexscreener.com/solana/${active.mint}`],
+              ["Pump.fun", `https://pump.fun/coin/${active.mint}`],
+              ["Birdeye", `https://birdeye.so/token/${active.mint}?chain=solana`],
+            ].map(([label, href]) => (
+              <a key={label} className="research__link" href={href} target="_blank" rel="noreferrer">
+                {label}
+              </a>
+            ))}
+          </div>
+          <p className="research__mint mono">{active.mint}</p>
+        </>
+      )}
+    </div>
+  )
+
   return (
     <div className="app">
       <header className="header">
@@ -230,161 +403,25 @@ export default function App() {
       </header>
 
       <div className="body">
-        <section className="pane pane--scan" aria-label="Scan">
-          <h2 className="pane__title">Scan</h2>
-          {error && <p className="empty">{error}</p>}
-          {!error && candidates.length === 0 && <p className="empty">No candidates.</p>}
-          {candidates.map((c) => {
-            const chUp = (c.changeH1 ?? 0) >= 0
-            return (
-              <button
-                key={c.mint}
-                type="button"
-                className="scan__row"
-                aria-selected={c.mint === selected}
-                onClick={() => setSelected(c.mint)}
-              >
-                <span className="scan__symbol">{c.symbol}</span>
-                <span className={`scan__flag scan__flag--${flagFor(c)}`} aria-hidden="true" />
-                <Spark points={trace.get(c.mint) ?? []} up={chUp} />
-                <span className="scan__age mono">
-                  {age(c.createdAt, now)} / {usd(c.liquidityUsd)}
-                  {/* Which universe this came from. The promotional feeds and
-                      the launchpad are being measured against each other, so
-                      the operator should be able to see which is which. */}
-                  {c.origin === "launchpad" && <span className="scan__origin"> LP</span>}
-                  {(c.origin === "boost" || c.origin === "both") && (
-                    <span className="scan__origin scan__origin--paid"> AD</span>
-                  )}
-                </span>
-                {c.changeH1 !== null && (
-                  <span className={`scan__change mono ${chUp ? "scan__change--up" : "scan__change--down"}`}>
-                    {chUp ? "+" : ""}
-                    {c.changeH1.toFixed(1)}%
-                  </span>
-                )}
-              </button>
-            )
-          })}
-        </section>
-
-        <main className="pane">
-          {!active && <p className="empty">Select a candidate.</p>}
-          {active && (
-            <div className="primary">
-              <div className="primary__identity">
-                <div className="primary__titlerow">
-                  <h1 className="primary__symbol">{active.symbol}</h1>
-                  <span className="primary__venue mono">{active.dex}</span>
-                </div>
-                <span className="primary__name">
-                  {active.name}
-                  <span className="primary__mint mono"> / {shortMint(active.mint)}</span>
-                </span>
-              </div>
-
-              <PriceChart pool={active.pool} mint={active.mint} />
-
-              {verdict?.kind === "ok" && (
-                <div className={`verdict verdict--${verdict.verdict}`}>
-                  <span className="verdict__word">{verdict.verdict.replace("-", " ")}</span>
-                  <span className="verdict__note">{VERDICT_NOTE[verdict.verdict]}</span>
-                </div>
-              )}
-
-              {verdict?.kind === "unset" && (
-                <div className="verdict verdict--unset">
-                  <span className="verdict__word">policy unset</span>
-                  <span className="verdict__note">
-                    gates below are live; the combination rule is not written yet
-                  </span>
-                </div>
-              )}
-
-              <Annunciator gates={gates} />
-            </div>
-          )}
-        </main>
-
-        <aside className="pane pane--support" aria-label="Detail">
-          <h2 className="pane__title">Detail</h2>
-          {active && (
-            <>
-              <Stat k="Price" v={usd(active.priceUsd)} />
-              <Stat k="Liquidity" v={usd(active.liquidityUsd)} />
-              <Stat k="Volume 24h" v={usd(active.volume24h)} />
-              <Pressure buys={active.buys24h} sells={active.sells24h} />
-              <Stat k="Age" v={age(active.createdAt, now)} />
-
-              <h2 className="pane__title pane__title--section">Paper Book</h2>
-              <div className="exec">
-                <div className="exec__row">
-                  <span className="exec__key">ENGINE</span>
-                  <span className={`exec__value ${engine ? "exec__value--observe" : ""}`}>
-                    {engine ? (engine.killed ? "KILLED" : "TRADING") : "unreachable"}
-                  </span>
-                </div>
-                {engine && (
-                  <>
-                    <div className="exec__row">
-                      <span className="exec__key">OPEN</span>
-                      <span className="exec__value">{engine.open.length}</span>
-                    </div>
-                    <div className="exec__row">
-                      <span className="exec__key">CLOSED</span>
-                      <span className="exec__value">{engine.stats.closedCount}</span>
-                    </div>
-                    <div className="exec__row">
-                      <span className="exec__key">WIN RATE</span>
-                      <span className="exec__value">
-                        {engine.stats.winRate === null
-                          ? "--"
-                          : `${Math.round(engine.stats.winRate * 100)}%`}
-                      </span>
-                    </div>
-                    <div className="exec__row">
-                      <span className="exec__key">SIM PNL</span>
-                      <span className={`exec__value ${engine.stats.totalPnlUsd >= 0 ? "exec__value--up" : "exec__value--down"}`}>
-                        {`${engine.stats.totalPnlUsd >= 0 ? "+" : "-"}$${Math.abs(engine.stats.totalPnlUsd).toFixed(2)}`}
-                      </span>
-                    </div>
-                  </>
-                )}
-                {engine?.budget && (
-                  <div className="exec__row">
-                    <span className="exec__key">DAY SPEND</span>
-                    <span className="exec__value">
-                      {engine.budget.spentTodaySol.toFixed(2)} / {engine.budget.dailyCapSol} SOL
-                    </span>
-                  </div>
-                )}
-                <p className="exec__note">
-                  Simulated capital under full envelope discipline, running in the
-                  cloud. Live execution arms only after a signer with hard caps
-                  and a fresh signed envelope.
-                </p>
-              </div>
-
-              {engine?.events && engine.events.length > 0 && (
-                <>
-                  <h2 className="pane__title pane__title--section">Decisions</h2>
-                  <div className="decisions">
-                    {engine.events.slice(0, 12).map((e) => {
-                      const v = describeEvent(e)
-                      return (
-                        <div key={`${e.at}-${v.label}`} className={`decision decision--${v.kind}`}>
-                          <span className="decision__label mono">{v.label}</span>
-                          <span className="decision__detail">{v.detail}</span>
-                          <span className="decision__age mono">{age(e.at, now)}</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </>
-              )}
-            </>
-          )}
-        </aside>
+        <Rail />
+        <Workspace
+          render={(panel: Panel) => {
+            switch (panel.type) {
+              case "scan":
+                return renderScan()
+              case "chart":
+                return renderPrimary()
+              case "gates":
+                return renderGates()
+              case "book":
+                return renderBook()
+              case "analyst":
+                return <AnalystPanel mint={active?.mint ?? null} />
+              case "browser":
+                return renderBrowser()
+            }
+          }}
+        />
       </div>
     </div>
   )

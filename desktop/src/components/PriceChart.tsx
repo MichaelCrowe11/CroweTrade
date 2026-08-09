@@ -14,7 +14,10 @@ import { useEffect, useState } from "react"
 
 declare global {
   interface Window {
-    crowetrade?: { candles?: (pool: string) => Promise<number[][]> }
+    crowetrade?: {
+      candles?: (pool: string) => Promise<number[][]>
+      ask?: (question: string) => Promise<{ text: string; consulted: string[] }>
+    }
   }
 }
 

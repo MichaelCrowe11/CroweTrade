@@ -25,17 +25,27 @@
     "wait-on": "^8.0.1"
   },
   "dependencies": {
+    "motion": "^13.0.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.14"
   },
   "build": {
     "appId": "com.crowelogic.crowetrade",
     "productName": "CroweTrade",
-    "directories": { "output": "release" },
-    "files": ["dist/**/*", "dist-electron/**/*"],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
     "mac": {
       "category": "public.app-category.finance",
-      "target": ["dmg", "zip"]
+      "target": [
+        "dmg",
+        "zip"
+      ]
     }
   }
 }
