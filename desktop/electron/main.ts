@@ -53,6 +53,24 @@ async function askAnalyst(
   const root = app.isPackaged
     ? path.join(process.resourcesPath, "analyst")
     : path.join(__dirname, "../../analyst")
+
+  // The Analyst's tool surface is the anonymous READ subset, enforced HERE
+  // rather than trusted from the spec file. The engine's spec also documents
+  // authenticated operations now (POST /api/research answered 401 to the
+  // anonymous Analyst and failed whole answers, observed live); the read-only
+  // boundary is this surface's security design, so non-GET operations never
+  // reach the model at all.
+  const spec = JSON.parse(
+    fs.readFileSync(path.join(root, "config/engine-openapi.json"), "utf8"),
+  ) as { paths?: Record<string, Record<string, unknown>> }
+  if (spec.paths) {
+    for (const [p, methods] of Object.entries(spec.paths)) {
+      for (const m of Object.keys(methods)) {
+        if (m.toLowerCase() !== "get") delete methods[m]
+      }
+      if (Object.keys(methods).length === 0) delete spec.paths[p]
+    }
+  }
   const res = await fetch(`${FOUNDRY}/openai/v1/responses`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -65,7 +83,7 @@ async function askAnalyst(
           name: "crowetrade_engine_read",
           description: "Read-only access to the live CroweTrade engine.",
           auth: { type: "anonymous" },
-          spec: JSON.parse(fs.readFileSync(path.join(root, "config/engine-openapi.json"), "utf8")),
+          spec,
         },
       }],
       input: question,
@@ -98,7 +116,11 @@ async function askAnalyst(
           onTool(name)
         }
       } else if (evt.type === "response.failed" || evt.type === "error") {
-        failure = JSON.stringify(evt).slice(0, 200)
+        // Name the actual failure; a truncated raw event hides the reason
+        // right where it matters (learned from a live tool_user_error).
+        const resp = evt["response"] as { error?: { message?: string } } | undefined
+        const top = evt["error"] as { message?: string } | undefined
+        failure = (resp?.error?.message ?? top?.message ?? JSON.stringify(evt)).slice(0, 300)
       }
     }
   }

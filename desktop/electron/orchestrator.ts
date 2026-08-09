@@ -282,7 +282,10 @@ async function streamRound(
         const r = evt["response"] as { id?: string } | undefined
         if (r?.id) id = r.id
       } else if (evt.type === "response.failed" || evt.type === "error") {
-        throw new Error(`stream failed: ${JSON.stringify(evt).slice(0, 200)}`)
+        const resp = evt["response"] as { error?: { message?: string } } | undefined
+        const top = evt["error"] as { message?: string } | undefined
+        const msg = resp?.error?.message ?? top?.message ?? JSON.stringify(evt)
+        throw new Error(`stream failed: ${msg.slice(0, 300)}`)
       }
     }
   }
