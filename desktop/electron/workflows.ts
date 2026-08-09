@@ -3,6 +3,7 @@ import * as path from "node:path"
 import { app } from "electron"
 import { validateWorkflow, type WorkflowSpec } from "./wfspec"
 import { runCommand, runPython, type Emit } from "./exec"
+import { runNotebook } from "./notebook"
 
 /**
  * The workflow shelf: model-authored programs the operator keeps.
@@ -101,6 +102,12 @@ export async function runWorkflow(ref: string, emit: Emit): Promise<string> {
       }
     } else if (step.kind === "python") {
       const r = await runPython(step.code, emit)
+      if (!r.startsWith("exit 0")) {
+        result = `failed at step ${i + 1}`
+        break
+      }
+    } else if (step.kind === "notebook") {
+      const r = await runNotebook(step.path, emit)
       if (!r.startsWith("exit 0")) {
         result = `failed at step ${i + 1}`
         break

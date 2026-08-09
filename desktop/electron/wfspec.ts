@@ -16,6 +16,7 @@ export type WfStep =
   | { kind: "command"; command: string }
   | { kind: "python"; code: string }
   | { kind: "panels"; rows: string[][] }
+  | { kind: "notebook"; path: string }
 
 export interface WorkflowSpec {
   name: string
@@ -56,6 +57,15 @@ export function validateWorkflow(input: unknown): WfValidation {
     } else if (s?.kind === "python" && typeof s.code === "string" && s.code.trim()) {
       if (s.code.length > MAX_TEXT) return { ok: false, reason: "a python step is too long" }
       steps.push({ kind: "python", code: s.code })
+    } else if (s?.kind === "notebook") {
+      // A bare .ipynb name only: the executor resolves it under the app's own
+      // notebooks directory, so a saved workflow can never be talked into
+      // executing a notebook from anywhere else on disk.
+      const p = (s as { path?: unknown }).path
+      if (typeof p !== "string" || !/^[A-Za-z0-9][A-Za-z0-9 _.-]*\.ipynb$/.test(p) || p.includes("..")) {
+        return { ok: false, reason: "notebook path must be a bare name ending in .ipynb" }
+      }
+      steps.push({ kind: "notebook", path: p })
     } else if (s?.kind === "panels" && Array.isArray(s.rows)) {
       const rows = (s.rows as unknown[][])
         .map((row) => (Array.isArray(row) ? row.filter((t) => PANEL_TYPES.has(String(t))) : []))

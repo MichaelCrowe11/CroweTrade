@@ -62,6 +62,17 @@ function run(cmd: string, args: string[], cwd: string, emit: Emit): Promise<stri
   })
 }
 
+/** Spawn a specific program through the same visible, stoppable rail. */
+export function runProgram(
+  cmd: string,
+  args: string[],
+  emit: Emit,
+  banner?: string,
+): Promise<string> {
+  if (banner) emit({ kind: "term", text: `${banner}\n` })
+  return run(cmd, args, defaultCwd(), emit)
+}
+
 export function runCommand(command: string, cwd: string | undefined, emit: Emit): Promise<string> {
   if (/(^|\s)sudo(\s|$)/.test(command)) {
     const line = "refused: sudo is not available here\n"

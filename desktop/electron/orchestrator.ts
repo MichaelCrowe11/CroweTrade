@@ -2,6 +2,7 @@ import { createSseParser } from "./sse"
 import { azToken } from "./token"
 import { runCommand, runPython, stopExec, type Emit as ExecEmit } from "./exec"
 import { saveWorkflow, listWorkflows, runWorkflow } from "./workflows"
+import { saveNotebook, listNotebooks, runNotebook } from "./notebook"
 
 /**
  * The Orchestrator: an agent harness that runs the terminal, visibly.
@@ -58,7 +59,13 @@ Rules, non-negotiable:
   {command}, kind "python" {code}, kind "panels" {rows}. There is NO
   templating between steps; chain inside a step with pipes if needed. When
   the operator asks to keep, save, or reuse a procedure, save_workflow it,
-  then confirm what you saved. run_workflow replays one by name, visibly.`
+  then confirm what you saved. run_workflow replays one by name, visibly.
+- NOTEBOOKS are how research is kept: save_notebook writes code cells to a
+  named .ipynb, run_notebook executes it with the research kernel (pandas
+  available) and writes the outputs back into the file, so the notebook IS
+  the research record. Prefer a notebook over run_python whenever the
+  analysis is worth keeping or repeating; a workflow step
+  {"kind":"notebook","path":"name.ipynb"} replays it.`
 
 interface FnTool {
   type: "function"
@@ -173,6 +180,37 @@ const TOOLS: FnTool[] = [
       properties: { name: { type: "string" } },
       required: ["name"],
     },
+  },
+  {
+    type: "function",
+    name: "save_notebook",
+    description:
+      "Save python code cells as a named Jupyter notebook in the research library. Overwrites an existing name.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Bare notebook name, e.g. liquidity-scan.ipynb" },
+        cells: { type: "array", items: { type: "string" }, description: "Python source per cell." },
+      },
+      required: ["name", "cells"],
+    },
+  },
+  {
+    type: "function",
+    name: "run_notebook",
+    description:
+      "Execute a saved notebook with the research kernel. Cell outputs stream to the terminal and are written back into the .ipynb.",
+    parameters: {
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    },
+  },
+  {
+    type: "function",
+    name: "list_notebooks",
+    description: "List the saved research notebooks.",
+    parameters: { type: "object", properties: {} },
   },
 ]
 
@@ -306,6 +344,13 @@ export async function runOrchestrator(goal: string, emit: Emit): Promise<{ text:
         )
       } else if (call.name === "run_workflow" && typeof args["name"] === "string") {
         result = await runWorkflow(args["name"], emit)
+      } else if (call.name === "save_notebook") {
+        const saved = saveNotebook(args["name"], args["cells"])
+        result = saved.ok ? `saved notebook ${saved.file}` : `refused: ${saved.reason}`
+      } else if (call.name === "run_notebook" && typeof args["name"] === "string") {
+        result = await runNotebook(args["name"], emit)
+      } else if (call.name === "list_notebooks") {
+        result = JSON.stringify(listNotebooks())
       } else if (call.name === "arrange_layout") {
         emit({ kind: "panels", action: "arrange", rows: args["rows"] })
       } else if (call.name === "open_panel") {

@@ -46,6 +46,16 @@ test("panels rows are filtered to known types and an all-invalid step refuses", 
   assert.ok(!allBad.ok)
 })
 
+test("notebook steps take a bare .ipynb name and refuse traversal", () => {
+  const ok = validateWorkflow({ ...good, steps: [{ kind: "notebook", path: "liquidity.ipynb" }] })
+  assert.ok(ok.ok)
+  assert.deepEqual(ok.ok && ok.workflow.steps[0], { kind: "notebook", path: "liquidity.ipynb" })
+  for (const path of ["../evil.ipynb", "/etc/x.ipynb", "notes.txt", "a/b.ipynb"]) {
+    const r = validateWorkflow({ ...good, steps: [{ kind: "notebook", path }] })
+    assert.ok(!r.ok, `should refuse ${path}`)
+  }
+})
+
 test("names are trimmed and length-capped, oversize steps refuse", () => {
   const r = validateWorkflow({ ...good, name: "  engine health  " })
   assert.equal(r.ok && r.workflow.name, "engine health")
