@@ -88,10 +88,34 @@
   /* Retained for the few places a hard edge is correct (rules, lamps). */
   --clm-radius: var(--clm-r-sm);
 
-  /* Annunciator states. Red is the ONLY non-brand hue in the app and it earns
-   * its place: a failed critical gate is the one thing that must never be
-   * mistaken for anything else. Gold cannot carry that meaning, because gold is
-   * already the brand's approving colour. */
+  /* ── Two colour axes, deliberately separate ──────────────────────────────
+   *
+   * Gold was doing three jobs: brand, "this gate passed", and "price is up".
+   * A hue carrying brand plus two meanings signals none of them, so the axes
+   * are split:
+   *
+   *   GOLD  = brand and SAFETY. The wordmark, the eyebrow, a lit gate lamp.
+   *           It answers "is this thing sound".
+   *   GREEN = DIRECTION, positive. Price rising, PnL above water, buy-side
+   *           flow. It answers "which way is it going".
+   *   RED   = direction negative AND critical failure, at two volumes.
+   *
+   * Safety and direction are genuinely different questions -- a token can be
+   * structurally sound and falling, or unsafe and ripping -- so they must not
+   * share a colour. That is also why a rising price no longer looks like an
+   * approving gate.
+   *
+   * The green is a muted botanical tone, not a terminal neon: acid green on
+   * near-black is the default every generated dashboard reaches for, and it
+   * would fight the warm gold rather than sit beside it. */
+  --clm-up: #5fae74;
+  --clm-up-soft: #7cc48e;
+  --clm-down: #d4574e;
+  /* Drawdown is information; an unsafe token is an alarm. They must not read at
+   * the same volume, so the direction-red is dimmer than the lamp-red. */
+  --clm-down-soft: rgba(212, 87, 78, 0.78);
+
+  /* Annunciator states. Gold means the gate is satisfied. */
   --clm-lamp-pass: var(--clm-gold);
   --clm-lamp-fail: #d4574e;
   --clm-lamp-unknown: rgba(154, 154, 162, 0.28);

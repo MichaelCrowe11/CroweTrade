@@ -106,7 +106,7 @@ export function PriceChart({ pool, mint }: { pool: string | null; mint: string }
   const t1 = candles[candles.length - 1]?.[0] ?? 0
 
   return (
-    <div className="chart">
+    <div className={`chart ${up ? "chart--up" : "chart--down"}`}>
       <div className="chart__head">
         <span className="chart__price mono">${fmtPrice(last)}</span>
         <span className={`chart__change mono ${up ? "chart__change--up" : "chart__change--down"}`}>
@@ -118,8 +118,8 @@ export function PriceChart({ pool, mint }: { pool: string | null; mint: string }
         aria-label={`Price ${fmtPrice(last)} dollars, ${up ? "up" : "down"} ${Math.abs(changePct).toFixed(1)} percent over ${candles.length} minutes`}>
         <defs>
           <linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--clm-gold)" stopOpacity="0.22" />
-            <stop offset="100%" stopColor="var(--clm-gold)" stopOpacity="0" />
+            <stop offset="0%" stopColor={up ? "var(--clm-up)" : "var(--clm-down)"} stopOpacity="0.24" />
+            <stop offset="100%" stopColor={up ? "var(--clm-up)" : "var(--clm-down)"} stopOpacity="0" />
           </linearGradient>
         </defs>
 

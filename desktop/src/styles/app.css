@@ -223,13 +223,13 @@ body {
 .spark--empty { display: block; }
 .spark__line { fill: none; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
 .spark__fill { stroke: none; }
-.spark--up .spark__line { stroke: var(--clm-gold); }
-.spark--up .spark__fill { fill: var(--clm-gold); opacity: 0.13; }
-.spark--down .spark__line { stroke: rgba(212, 87, 78, 0.85); }
-.spark--down .spark__fill { fill: rgba(212, 87, 78, 1); opacity: 0.1; }
+.spark--up .spark__line { stroke: var(--clm-up); }
+.spark--up .spark__fill { fill: var(--clm-up); opacity: 0.15; }
+.spark--down .spark__line { stroke: var(--clm-down); }
+.spark--down .spark__fill { fill: var(--clm-down); opacity: 0.12; }
 
-.scan__change--up { color: var(--clm-gold-soft); }
-.scan__change--down { color: rgba(212, 87, 78, 0.78); }
+.scan__change--up { color: var(--clm-up); }
+.scan__change--down { color: var(--clm-down-soft); }
 
 .scan__flag {
   grid-column: 3;
@@ -327,8 +327,8 @@ body {
 .chart__price { font-size: 22px; font-weight: 600; color: var(--clm-ink); }
 
 .chart__change { font-size: 12px; }
-.chart__change--up { color: var(--clm-gold-soft); }
-.chart__change--down { color: rgba(212, 87, 78, 0.85); }
+.chart__change--up { color: var(--clm-up); }
+.chart__change--down { color: var(--clm-down); }
 
 .chart__svg { width: 100%; height: 240px; display: block; }
 
@@ -340,14 +340,20 @@ body {
   fill: var(--clm-muted);
 }
 
-.chart__vol { fill: var(--clm-gold); opacity: 0.14; }
+.chart__vol { fill: var(--clm-muted); opacity: 0.22; }
 
+/* The trace is price, so it carries DIRECTION, not brand. A rising token in
+ * gold looked like an approving gate; it is only a token going up. */
 .chart__line {
   fill: none;
-  stroke: var(--clm-gold);
+  stroke: var(--clm-up);
   stroke-width: 1.6;
   stroke-linejoin: round;
 }
+
+.chart--down .chart__line { stroke: var(--clm-down); }
+.chart--down .chart__tip { fill: var(--clm-down); }
+.chart--down .chart__last { stroke: var(--clm-down); opacity: 0.5; }
 
 .chart__last {
   stroke: var(--clm-gold-deep);
@@ -356,7 +362,7 @@ body {
   opacity: 0.7;
 }
 
-.chart__tip { fill: var(--clm-gold-soft); }
+.chart__tip { fill: var(--clm-up-soft); }
 
 /* The verdict is the single dominant element on the surface. It is deliberately
  * a word rather than a number: a score of 62 invites the eye to negotiate with
@@ -495,7 +501,7 @@ body {
   overflow: hidden;
 }
 
-.pressure__buys { height: 100%; background: var(--clm-gold); }
+.pressure__buys { height: 100%; background: var(--clm-up); }
 
 .pressure__caption { font-size: 10px; color: var(--clm-muted); }
 
@@ -522,6 +528,9 @@ body {
   font-size: 12px;
   color: var(--clm-ink);
 }
+
+.exec__value--up { color: var(--clm-up); }
+.exec__value--down { color: var(--clm-down); }
 
 .exec__value--observe {
   color: var(--clm-blue);
@@ -556,8 +565,8 @@ body {
 
 .decision--entry { border-left-color: var(--clm-gold); }
 .decision--entry .decision__label { color: var(--clm-gold); }
-.decision--exit-win .decision__label { color: var(--clm-gold-soft); }
-.decision--exit-loss .decision__label { color: var(--clm-lamp-fail); }
+.decision--exit-win .decision__label { color: var(--clm-up); }
+.decision--exit-loss .decision__label { color: var(--clm-down); }
 .decision--skip .decision__label { color: var(--clm-muted); }
 
 .empty {

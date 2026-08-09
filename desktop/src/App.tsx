@@ -344,7 +344,7 @@ export default function App() {
                     </div>
                     <div className="exec__row">
                       <span className="exec__key">SIM PNL</span>
-                      <span className="exec__value">
+                      <span className={`exec__value ${engine.stats.totalPnlUsd >= 0 ? "exec__value--up" : "exec__value--down"}`}>
                         {`${engine.stats.totalPnlUsd >= 0 ? "+" : "-"}$${Math.abs(engine.stats.totalPnlUsd).toFixed(2)}`}
                       </span>
                     </div>
