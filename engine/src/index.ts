@@ -59,6 +59,9 @@ export default {
       if (url.pathname === "/api/positions" && req.method === "GET") {
         return json(await ledger(env).summary())
       }
+      if (url.pathname === "/api/train" && req.method === "GET") {
+        return json(await ledger(env).trainModel())
+      }
       if (url.pathname === "/api/exit-sweep" && req.method === "GET") {
         return json(await ledger(env).exitSweep())
       }

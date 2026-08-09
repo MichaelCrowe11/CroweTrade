@@ -37,6 +37,7 @@ import {
   type Trajectory,
 } from "./strategy.js"
 import { computeFeatures } from "../../shared/features.js"
+import { fit } from "../../shared/model.js"
 import { quoteBuy, quoteSell, LAMPORTS_PER_SOL } from "./execution/jupiter.js"
 import { dryRunSwap } from "./execution/swap.js"
 import { capture } from "./posthog.js"
@@ -967,6 +968,67 @@ export class Ledger extends DurableObject<Env> {
       note: "Exit-rule counterfactual on real entries and our own observed ticks. Ignores exit impact, so these are upper bounds — rank rules against each other, do not read as achievable PnL.",
       positions: positions.length,
       results: results.sort((a, b) => b.pnlUsd - a.pnlUsd),
+    }
+  }
+
+  /**
+   * Fits the edge model on labeled decisions and REPORTS. It does not arm it.
+   *
+   * Training is separated from deployment on purpose: a fit that looks good is
+   * still a claim, and the sizing layer must not start consuming a probability
+   * because a cron happened to produce one. Arming is a human decision made
+   * against the reliability table below.
+   *
+   * The label is "did this clear the round-trip cost hurdle", not "did it go
+   * up". A token that rose 3% while costing 6% to trade is a loss, and a model
+   * trained on raw direction would learn to recommend exactly those.
+   */
+  trainModel(): unknown {
+    const COST_HURDLE_PCT = 6
+    const rows = this.sql().exec<{
+      at: number; features: string; forward_ret_pct: number | null
+      price: number | null; origin: string | null
+    }>(
+      `SELECT d.at, d.features, d.forward_ret_pct, d.price, d.origin
+       FROM decisions d
+       WHERE d.labeled = 1 AND d.forward_ret_pct IS NOT NULL
+       ORDER BY d.at ASC`,
+    ).toArray()
+
+    const training = rows.map((r) => {
+      const f = JSON.parse(r.features) as Record<string, number | null>
+      const liq = 0 // liquidity is not on the feature snapshot; see note below
+      return {
+        at: r.at,
+        features: [
+          f["netFlowShare"] ?? 0,
+          f["flowAccel"] ?? 0,
+          f["priceProgressPct"] ?? 0,
+          f["liqTrendPct"] ?? 0,
+          f["ticks"] ?? 0,
+          liq,
+        ],
+        label: ((r.forward_ret_pct ?? 0) > COST_HURDLE_PCT ? 1 : 0) as 0 | 1,
+      }
+    })
+
+    const m = fit(training)
+    const positives = training.filter((t) => t.label === 1).length
+    return {
+      note:
+        "Fitted and reported only; NOT armed. Read `auc` (0.5 = coin flip) and the reliability table before trusting it. Label = forward return cleared a 6% round-trip cost hurdle.",
+      labeledRows: training.length,
+      positives,
+      baseRate: training.length > 0 ? Number((positives / training.length).toFixed(3)) : null,
+      fit: m,
+      verdict:
+        m === null
+          ? "insufficient data to fit"
+          : m.auc < 0.55
+            ? "no usable signal yet: AUC is near chance"
+            : m.auc < 0.65
+              ? "weak signal; keep accumulating before trusting it"
+              : "signal present; inspect reliability before arming",
     }
   }
 
