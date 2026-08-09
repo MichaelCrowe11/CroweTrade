@@ -235,8 +235,33 @@ export async function fetchPairsForMints(
  * Sorted newest first, because on this market age is the dominant variable and
  * a list ordered by anything else buries the only rows that matter.
  */
-export async function fetchCandidates(signal: AbortSignal): Promise<Scan> {
-  const [solUsd, origins] = await Promise.all([fetchSolUsd(signal), discoverMints(signal)])
+export async function fetchCandidates(
+  signal: AbortSignal,
+  /**
+   * Last known SOL price. When greater than zero the quote is SKIPPED, not
+   * merely used as a fallback.
+   *
+   * The price endpoint shares a rate limit with discovery, and it was taking
+   * the WHOLE scan down six times an hour: one failed quote threw, and a tick
+   * that could have discovered forty tokens discovered none. SOL moving a
+   * fraction of a percent while we reuse a cached figure costs nothing; losing
+   * a minute of discovery on this market costs the tokens launched in it.
+   */
+  fallbackSolUsd = 0,
+): Promise<Scan> {
+  // A usable cached price SKIPS the quote entirely. Passing it as a fallback
+  // alone would still spend the request every tick and only help on failure,
+  // which is the bug this comment exists to stop someone reintroducing.
+  const [solResult, origins] = await Promise.all([
+    fallbackSolUsd > 0 ? Promise.resolve(fallbackSolUsd) : fetchSolUsd(signal).catch(() => null),
+    discoverMints(signal),
+  ])
+  const solUsd = solResult ?? 0
+  if (solUsd <= 0) {
+    // No price at all, cached or fresh: liquidity and sizing would be
+    // meaningless, so report nothing rather than guess.
+    return { candidates: [], solUsd: 0 }
+  }
   if (origins.size === 0) return { candidates: [], solUsd }
 
   const priced = await fetchPairsForMints([...origins.keys()], solUsd, signal, origins)

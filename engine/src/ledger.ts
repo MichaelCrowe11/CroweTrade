@@ -361,10 +361,23 @@ export class Ledger extends DurableObject<Env> {
     let candidates: Candidate[] = []
     let solUsd = Number(this.metaGet("sol_usd") ?? "0")
     try {
-      const scan = await fetchCandidates(signal)
+      // Pass the cached price so a rate-limited quote degrades to a slightly
+      // stale SOL figure instead of a lost scan.
+      // Refresh the SOL quote at most every five minutes. It was fetched every
+      // tick purely to convert liquidity, which is a use that cannot tell the
+      // difference, while consuming a request from the same rate limit
+      // discovery needs. Passing 0 as the fallback forces a fetch when the
+      // cache is cold or stale.
+      const SOL_TTL_MS = 5 * 60_000
+      const solAge = now - Number(this.metaGet("sol_usd_at") ?? "0")
+      const wantFresh = solAge > SOL_TTL_MS || solUsd <= 0
+      const scan = await fetchCandidates(signal, wantFresh ? 0 : solUsd)
       candidates = scan.candidates
-      solUsd = scan.solUsd
-      this.metaSet("sol_usd", String(solUsd))
+      if (scan.solUsd > 0 && scan.solUsd !== solUsd) {
+        solUsd = scan.solUsd
+        this.metaSet("sol_usd", String(solUsd))
+        this.metaSet("sol_usd_at", String(now))
+      }
     } catch (e) {
       this.event("scan_error", { message: e instanceof Error ? e.message : String(e) })
     }
