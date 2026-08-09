@@ -337,6 +337,14 @@ function createWindow(): void {
 }
 
 void app.whenReady().then(() => {
+  // Dev launches get the real dock icon too; packaged builds carry it in the
+  // bundle via electron-builder, and the PNG is not in the packaged files
+  // list, so existsSync is the dev/prod guard here.
+  const dockIcon = path.join(__dirname, "../build/icon-1024.png")
+  if (process.platform === "darwin" && fs.existsSync(dockIcon)) {
+    app.dock?.setIcon(dockIcon)
+  }
+
   // Failures resolve to an empty array rather than rejecting across the bridge:
   // the chart renders its honest "no data" state and the app stays quiet.
   ipcMain.handle("ask", async (_e, question: unknown) => {

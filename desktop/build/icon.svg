@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- CroweTrade app icon.
+
+       The product glyph: three ascending candlesticks, gold on graphite.
+       Gold because an icon is brand, never direction (the green/red axes
+       live inside the app, on live numbers only). Distinct on purpose from
+       the corporate hex C and from the Analyst's swirl: two marks, two
+       jobs, and a third surface does not borrow either.
+
+       Geometry: Apple's 824x824 icon shape centered on the 1024 canvas,
+       corner radius 186. Depth is the house recipe at icon scale: a
+       lightness step, a lit top edge, and a hairline gold border. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1c1c1f"/>
+      <stop offset="100%" stop-color="#0a0a0b"/>
+    </linearGradient>
+    <linearGradient id="candle" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e7c984"/>
+      <stop offset="55%" stop-color="#d2ad62"/>
+      <stop offset="100%" stop-color="#9a7e44"/>
+    </linearGradient>
+    <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="18%" stop-color="#ffffff" stop-opacity="0.03"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Plate -->
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)"/>
+  <!-- Lit top edge -->
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#hair)"/>
+  <!-- Hairline gold border -->
+  <rect x="103" y="103" width="818" height="818" rx="183" fill="none"
+        stroke="#d2ad62" stroke-opacity="0.32" stroke-width="6"/>
+
+  <!-- Candles, ascending. Wicks first so bodies sit over them. -->
+  <g stroke="#9a7e44" stroke-width="16" stroke-linecap="round">
+    <line x1="322" y1="536" x2="322" y2="756"/>
+    <line x1="512" y1="400" x2="512" y2="700"/>
+    <line x1="702" y1="264" x2="702" y2="620"/>
+  </g>
+  <g fill="url(#candle)">
+    <rect x="270" y="580" width="104" height="132" rx="18"/>
+    <rect x="460" y="448" width="104" height="196" rx="18"/>
+    <rect x="650" y="312" width="104" height="256" rx="18"/>
+  </g>
+  <!-- Lit top edge on each body, the bevel at icon scale -->
+  <g fill="#f2debe" fill-opacity="0.85">
+    <rect x="282" y="584" width="80" height="7" rx="3.5"/>
+    <rect x="472" y="452" width="80" height="7" rx="3.5"/>
+    <rect x="662" y="316" width="80" height="7" rx="3.5"/>
+  </g>
+</svg>
