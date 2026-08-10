@@ -177,3 +177,55 @@ export function base58(bytes: Uint8Array): string {
   }
   return out
 }
+
+/** Base58 decode. Returns null on any character outside the alphabet rather
+ *  than throwing, because the input is often operator-pasted. */
+export function base58Decode(str: string): Uint8Array | null {
+  const A = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+  let n = 0n
+  for (const ch of str) {
+    const i = A.indexOf(ch)
+    if (i < 0) return null
+    n = n * 58n + BigInt(i)
+  }
+  const bytes: number[] = []
+  while (n > 0n) {
+    bytes.unshift(Number(n % 256n))
+    n /= 256n
+  }
+  // Leading '1' characters are leading zero bytes, the inverse of encoding.
+  for (const ch of str) {
+    if (ch !== "1") break
+    bytes.unshift(0)
+  }
+  return Uint8Array.from(bytes)
+}
+
+/**
+ * Verify a wallet's signature over a policy hash.
+ *
+ * Without this, `signature: "anything"` satisfies the guard and the consent
+ * record is decorative -- the same class of defect as a test that asserts
+ * against a lambda it defined itself. This makes the envelope's signature a
+ * fact that can be checked rather than a field that can be filled.
+ *
+ * Returns false on any malformation instead of throwing: a bad signature and
+ * an unparseable one are the same answer to the only question being asked.
+ */
+export async function verifyPolicySignature(
+  hash: string,
+  signerBase58: string,
+  signatureBase58: string,
+): Promise<boolean> {
+  try {
+    const pub = base58Decode(signerBase58)
+    const sig = base58Decode(signatureBase58)
+    if (!pub || pub.length !== 32 || !sig || sig.length !== SIG_LEN) return false
+    const key = await crypto.subtle.importKey("raw", pub, { name: "Ed25519" }, false, ["verify"])
+    return await crypto.subtle.verify(
+      { name: "Ed25519" }, key, sig, new TextEncoder().encode(hash),
+    )
+  } catch {
+    return false
+  }
+}

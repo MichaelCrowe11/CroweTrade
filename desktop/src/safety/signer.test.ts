@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
   parseKeypair, readCompactU16, layoutOf, fromBase64, toBase64,
-  signTransaction, base58, SIG_LEN, KEYPAIR_LEN,
+  signTransaction, base58, base58Decode, verifyPolicySignature, SIG_LEN, KEYPAIR_LEN,
 } from "../../../shared/signer.ts"
 
 /**
@@ -117,4 +117,46 @@ test("base58 round-trips a real derived address length", () => {
   // Solana addresses are 32 bytes and render as 32-44 base58 characters.
   const addr = base58(Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 13) % 256))
   assert.ok(addr.length >= 32 && addr.length <= 44, `unexpected length ${addr.length}`)
+})
+
+test("base58 decode is the exact inverse of encode", () => {
+  for (const bytes of [
+    Uint8Array.from([0, 0, 1]),
+    Uint8Array.from([255, 254, 1, 0]),
+    Uint8Array.from({ length: 32 }, (_, i) => (i * 11 + 5) % 256),
+  ]) {
+    assert.deepEqual(base58Decode(base58(bytes)), bytes)
+  }
+})
+
+test("base58 decode returns null on junk rather than throwing", () => {
+  // Operator-pasted input; 0, O, I and l are deliberately absent from the
+  // alphabet precisely because they are misread.
+  assert.equal(base58Decode("0OIl"), null)
+  assert.equal(base58Decode("not valid!"), null)
+})
+
+test("a policy signature VERIFIES, and any tampering fails it", async () => {
+  // A REAL pair, not the synthetic KEYPAIR fixture above. That fixture's
+  // "public key" bytes are not derived from its seed, which is fine for
+  // signing (signing uses only the seed) and useless for verification. The
+  // first version of this test used it and failed correctly.
+  const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])
+  const publicKey = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey))
+  const hash = "a".repeat(64)
+  const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, pair.privateKey,
+    new TextEncoder().encode(hash)))
+
+  assert.equal(await verifyPolicySignature(hash, base58(publicKey), base58(sig)), true)
+  // A different hash means the envelope changed after signing.
+  assert.equal(await verifyPolicySignature("b".repeat(64), base58(publicKey), base58(sig)), false)
+  // A different signer did not consent to this.
+  assert.equal(await verifyPolicySignature(hash, base58(new Uint8Array(32)), base58(sig)), false)
+})
+
+test("a made-up signature string does NOT pass, which is the whole point", async () => {
+  const publicKey = parseKeypair(KEYPAIR).publicKey
+  for (const fake of ["anything", "1".repeat(88), ""]) {
+    assert.equal(await verifyPolicySignature("a".repeat(64), base58(publicKey), fake), false, fake)
+  }
 })

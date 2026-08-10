@@ -70,6 +70,16 @@ export interface PreflightContext {
   killed: boolean
   /** True only when the operator has explicitly armed live trading. */
   liveArmed: boolean
+  /**
+   * Did the envelope's signature actually VERIFY against its own hash?
+   *
+   * The caller does the crypto (it is async; this guard is pure) and passes
+   * the answer in. Without this, `signature: "anything"` satisfied the check
+   * and the consent record was decorative — the same defect class as a test
+   * asserting against a lambda it defined itself. Undefined is treated as
+   * unverified, so a caller that forgets to check fails closed.
+   */
+  signatureVerified?: boolean
 }
 
 /**
@@ -112,6 +122,12 @@ export function preflight(intent: TradeIntent, ctx: PreflightContext): string | 
   // config file someone edited.
   if (!policy.signature || !policy.signer) {
     return "live envelope is unsigned: no wallet has consented to these limits"
+  }
+  // Present is not the same as valid. An unverified signature means the
+  // envelope was edited after signing, or was never signed by the wallet it
+  // names, and either way nobody consented to THESE limits.
+  if (ctx.signatureVerified !== true) {
+    return "live envelope signature did not verify against its own hash"
   }
 
   // 4. Caps. Each is checked against THIS trade plus what is already committed.

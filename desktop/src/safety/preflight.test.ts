@@ -34,6 +34,7 @@ const OK_CTX: PreflightContext = {
   nowMs: Date.parse("2026-01-01T00:00:00Z"),
   killed: false,
   liveArmed: true,
+  signatureVerified: true,
 }
 
 test("a fully compliant trade is allowed", () => {
@@ -63,6 +64,14 @@ test("expired consent refuses, and an unreadable date counts as expired", () => 
     preflight(OK_INTENT, { ...OK_CTX, policy: { ...LIVE, expiresAt: "not a date" } }) ?? "",
     /unreadable/,
   )
+})
+
+test("a PRESENT but unverified signature refuses: present is not valid", () => {
+  // The defect this closes: any non-empty string used to satisfy the check.
+  assert.match(preflight(OK_INTENT, { ...OK_CTX, signatureVerified: false }) ?? "", /did not verify/)
+  // Omitted entirely must also refuse, so a caller that forgets fails closed.
+  const { signatureVerified: _drop, ...noFlag } = OK_CTX
+  assert.match(preflight(OK_INTENT, noFlag) ?? "", /did not verify/)
 })
 
 test("an unsigned live envelope refuses: nobody consented to these limits", () => {

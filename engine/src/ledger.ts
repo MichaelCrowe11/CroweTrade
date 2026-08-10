@@ -40,7 +40,7 @@ import {
 import { computeFeatures } from "../../shared/features.js"
 import { fit, score, buildFeatureVector, type FeatureSnapshot } from "../../shared/model.js"
 import { liveArmed } from "../../shared/preflight.js"
-import { parseKeypair, base58 } from "../../shared/signer.js"
+import { parseKeypair, base58, verifyPolicySignature } from "../../shared/signer.js"
 import { executeSwap, walletBalanceSol } from "./execution/live.js"
 import { ARMED_MODEL } from "../../shared/armed-model.js"
 import { quoteBuy, quoteSell, LAMPORTS_PER_SOL } from "./execution/jupiter.js"
@@ -1156,7 +1156,13 @@ export class Ledger extends DurableObject<Env> {
               openPositions: this.openPositions().length, impactPct,
               simulationOk: sim.ok, walletBalanceSol: balance,
             },
-            ctx: { policy, nowMs: now, killed, liveArmed: true },
+            ctx: {
+              policy, nowMs: now, killed, liveArmed: true,
+              // Verified here rather than trusted: the guard is pure and
+              // cannot do async crypto, so the caller owes it this answer.
+              signatureVerified: policy.signature !== null && policy.signer !== null
+                && await verifyPolicySignature(hash, policy.signer, policy.signature),
+            },
           })
           if (!result.ok || !result.fill) {
             this.event("entry_skipped", {

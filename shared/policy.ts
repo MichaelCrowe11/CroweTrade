@@ -244,3 +244,53 @@ export async function policyHash(p: PolicyEnvelope): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes)
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")
 }
+
+/**
+ * The DUST envelope: the first policy allowed to spend real money.
+ *
+ * Sized so that being completely wrong is affordable. At roughly $84 SOL these
+ * caps are about $1.70 per trade and $8.40 per day against a wallet holding
+ * ~$20, which means the worst realistic outcome of a bug is a rounding error
+ * on a dinner. That is the entire design goal: the number is chosen so the
+ * lesson is cheap, not so the return is meaningful.
+ *
+ * It inherits every entry and exit rule from the paper policy, deliberately.
+ * The paper record is only a rehearsal for this if the rules are the same
+ * ones; changing strategy and execution in the same step would mean the first
+ * live result could not be compared to anything.
+ *
+ * THE HASH CHANGES, WHICH STARTS A NEW COHORT. That is correct and wanted:
+ * real fills must never be averaged into a record of imagined ones, and the
+ * `execution` column keeps them separable even within the cohort.
+ *
+ * WHAT MUST BE EDITED BEFORE THIS IS USED, both deliberately left wrong so an
+ * unedited copy fails closed:
+ *
+ *   expiresAt  — a near date. It is in the PAST as written, so an envelope
+ *                nobody has reviewed refuses every trade.
+ *   signer     — the trading wallet's address.
+ *   signature  — that wallet's signature over this envelope's canonical hash,
+ *                produced by `engine/scripts/sign-policy.mjs`.
+ *
+ * The signature is not regulatory theatre even for a sole operator. It is the
+ * act that makes a fill traceable to a specific set of limits somebody agreed
+ * to, rather than to a config file that happened to be deployed. Preflight
+ * refuses an unsigned live envelope for that reason.
+ */
+export const LIVE_DUST_POLICY: PolicyEnvelope = {
+  ...PAPER_POLICY,
+  product: "crowetrade-live",
+  waiverSha256: "personal-use-sole-operator",
+
+  // ~$1.70 a trade, ~$8.40 a day, one position at a time. One position is not
+  // a risk limit so much as a legibility one: with a single open trade, every
+  // on-chain event during the test has exactly one possible explanation.
+  perTradeCapSol: 0.02,
+  dailyCapSol: 0.1,
+  maxOpenPositions: 1,
+
+  // MUST be updated to a near-future date before use. Past by default.
+  expiresAt: "2000-01-01T00:00:00Z",
+  signature: null,
+  signer: null,
+}
