@@ -4,3 +4,6 @@ worker-configuration.d.ts
 .wrangler/
 .admin-token
 .helius-key
+
+# Never commit live-trading values
+.env.live
