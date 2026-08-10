@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import { existsSync } from "node:fs"
 
 /**
  * Azure token cache for the Analyst and the Orchestrator.
@@ -42,15 +43,51 @@ export function createTokenCache(fetcher: () => Promise<string>, ttlMs: number):
   }
 }
 
+/**
+ * Where `az` actually lives, for a GUI process.
+ *
+ * An app launched from Finder or the Dock inherits launchd's minimal PATH
+ * (/usr/bin:/bin:/usr/sbin:/sbin) — NOT the shell's — so Homebrew's
+ * /opt/homebrew/bin is absent and a bare execFile("az") fails ENOENT in the
+ * installed app while working perfectly from a terminal. Same class as the
+ * packaged-resource bugs: what the dev machine supplies, the customer path
+ * does not. Candidates are tried in order and the first that exists wins;
+ * bare "az" stays last so a PATH that DOES carry it still works.
+ */
+const AZ_CANDIDATES = [
+  "/opt/homebrew/bin/az",
+  "/usr/local/bin/az",
+  "/usr/bin/az",
+  "az",
+]
+
+function resolveAz(): string {
+  for (const p of AZ_CANDIDATES) {
+    if (p !== "az" && existsSync(p)) return p
+  }
+  return "az"
+}
+
 function fetchAzToken(): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
-      "az",
+      resolveAz(),
       ["account", "get-access-token", "--resource", "https://ai.azure.com", "--query", "accessToken", "-o", "tsv"],
       { encoding: "utf8" },
       (err, stdout) => {
-        if (err) reject(err)
-        else resolve(stdout.trim())
+        // Name the real cause. "spawn az ENOENT" tells the operator nothing
+        // about which of "not installed" or "not on this process's PATH" they
+        // are looking at, and they are different problems with different fixes.
+        if (err) {
+          const enoent = (err as NodeJS.ErrnoException).code === "ENOENT"
+          reject(enoent
+            ? new Error(
+              "Azure CLI not found by the app. It resolves from a terminal but not " +
+              "from a Finder-launched app, which inherits a minimal PATH. Checked: " +
+              AZ_CANDIDATES.join(", "),
+            )
+            : err)
+        } else resolve(stdout.trim())
       },
     )
   })

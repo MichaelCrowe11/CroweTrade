@@ -10,6 +10,7 @@
  */
 
 import { Ledger } from "./ledger.js"
+import { analystStream } from "./analyst.js"
 import { priceFor, paymentRequired, settle, ROUTES, SOLANA_MAINNET } from "./x402.js"
 
 export { Ledger }
@@ -136,6 +137,26 @@ export default {
       // The agent's research surface: read-only SQL over the corpus. Admin
       // token because an unbounded read of our own data is not something to
       // hand to the open internet, even read-only.
+      // The Analyst. Authenticated because inference costs money and an open
+      // endpoint is someone else's bill; the model itself is read-only by
+      // construction (its only three tools are reads), so the token guards
+      // spend, not capability.
+      if (url.pathname === "/api/analyst" && req.method === "POST") {
+        if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
+        const body = (await req.json().catch(() => ({}))) as { question?: string }
+        const question = (body.question ?? "").trim()
+        if (!question) return json({ error: "question required" }, 400)
+        const stub = ledger(env)
+        const stream = await analystStream(env.AI, question, {
+          state: () => stub.summary(),
+          exitSweep: () => stub.exitSweep(),
+          modelFit: () => stub.trainModel(),
+        })
+        return new Response(stream, {
+          headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", ...CORS },
+        })
+      }
+
       if (url.pathname === "/api/research" && req.method === "POST") {
         if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
         const body = (await req.json().catch(() => ({}))) as { sql?: string }

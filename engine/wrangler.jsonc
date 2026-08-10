@@ -6,6 +6,12 @@
   "compatibility_date": "2026-08-08",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true, "head_sampling_rate": 1 },
+  // The Analyst runs HERE, not in the desktop app. Azure pulled the Foundry
+  // credits on 2026-08-09 and took the Analyst down with them; hosting the loop
+  // in the Worker also means no model credential ever ships inside a desktop
+  // binary, and the tools read the Durable Object in-process instead of looping
+  // back over HTTP.
+  "ai": { "binding": "AI" },
   "triggers": { "crons": ["* * * * *"] },
   "assets": { "directory": "./public" },
   "durable_objects": {
