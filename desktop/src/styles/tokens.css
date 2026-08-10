@@ -126,6 +126,8 @@
    * absent rather than as a state. Unknown is a FINDING here (we looked and
    * could not measure), so it has to be legible enough to notice. */
   --clm-lamp-unknown: rgba(154, 154, 162, 0.55);
+  /* Text needs more contrast than a ring outline does to stay legible. */
+  --clm-lamp-unknown-text: rgba(154, 154, 162, 0.85);
 
   /* Terminal surface, mirrored by name from the desktop renderer's
    * --term-bg / --term-fg. The terminal is the one surface darker than the

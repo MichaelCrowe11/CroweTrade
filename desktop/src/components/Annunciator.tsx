@@ -25,6 +25,12 @@ export function Annunciator({ gates }: { gates: GateResult[] }) {
           <span className="lamp__led" aria-hidden="true" />
           <span className="lamp__label">{g.label}</span>
           <span className="lamp__detail">{g.detail}</span>
+          {/* The state named in words. Colour and shape already carry it, but
+              neither answers "is that good?" for a reader who does not know
+              that a revoked mint authority is the outcome you want. */}
+          <span className="lamp__verdict" aria-hidden="true">
+            {g.state === "pass" ? "OK" : g.state === "fail" ? "RISK" : "UNKNOWN"}
+          </span>
         </div>
       ))}
     </div>

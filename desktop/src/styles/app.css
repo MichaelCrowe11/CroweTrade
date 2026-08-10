@@ -453,9 +453,12 @@ body {
 
 .lamp__label {
   font-family: var(--clm-font-mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
   color: var(--clm-muted);
+  /* The verdict column narrowed this cell enough to wrap "LIQUIDITY DEPTH"
+     onto two lines, which broke the row rhythm the column exists to create. */
+  white-space: nowrap;
 }
 
 .lamp--pass .lamp__label { color: var(--clm-ink); }
@@ -466,6 +469,27 @@ body {
  * quietest thing in the panel while the static label shouted. Inverted. */
 .lamp__detail { font-size: 12.5px; color: var(--clm-ink); }
 .lamp--unknown .lamp__detail { color: var(--clm-muted); font-style: italic; }
+
+/* A VERDICT WORD per lamp, right-aligned into a column.
+ *
+ * The lamps encoded pass/fail/unknown in colour and shape, and the detail
+ * line stated a fact ("revoked"), but neither SAID whether the fact was good
+ * news. Read down the panel and "revoked / revoked / not yet observed" looks
+ * like a list of things that went wrong, when two of those are the outcomes
+ * you want. A single word per row, in a column the eye can run down without
+ * parsing prose, is what makes the panel scannable rather than readable. */
+.lamp { grid-template-columns: auto 1fr auto; }
+.lamp__verdict {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-self: center;
+  font-family: var(--clm-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--clm-lamp-unknown-text);
+}
+.lamp--pass .lamp__verdict { color: var(--clm-lamp-pass); }
+.lamp--fail .lamp__verdict { color: var(--clm-lamp-fail); }
 
 /* A critical gate that failed gets a hairline top edge in the fail hue. The
  * severity distinction has to be visible without reading, because the two

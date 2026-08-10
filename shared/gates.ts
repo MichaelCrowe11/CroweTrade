@@ -67,27 +67,30 @@ const MIN_LIQUIDITY_SOL = 5n
 function gateMintAuthority(s: TokenSnapshot): GateResult {
   const base = { id: "mint-authority" as const, label: "MINT AUTHORITY", severity: "critical" as const }
   if (s.mintAuthority === undefined) {
-    return { ...base, state: "unknown", detail: "not yet observed" }
+    return { ...base, state: "unknown", detail: "chain read pending" }
   }
   return s.mintAuthority === null
-    ? { ...base, state: "pass", detail: "revoked" }
+    ? { ...base, state: "pass", detail: "revoked, supply is fixed" }
     : { ...base, state: "fail", detail: `retained by ${s.mintAuthority.slice(0, 8)}` }
 }
 
 function gateFreezeAuthority(s: TokenSnapshot): GateResult {
   const base = { id: "freeze-authority" as const, label: "FREEZE AUTHORITY", severity: "critical" as const }
   if (s.freezeAuthority === undefined) {
-    return { ...base, state: "unknown", detail: "not yet observed" }
+    return { ...base, state: "unknown", detail: "chain read pending" }
   }
   return s.freezeAuthority === null
-    ? { ...base, state: "pass", detail: "revoked" }
+    ? { ...base, state: "pass", detail: "revoked, cannot be frozen" }
     : { ...base, state: "fail", detail: "can freeze your account" }
 }
 
 function gateLpLocked(s: TokenSnapshot): GateResult {
   const base = { id: "lp-locked" as const, label: "LP LOCKED", severity: "critical" as const }
-  if (s.lpLockedBps === undefined) return { ...base, state: "unknown", detail: "not yet observed" }
-  if (s.lpLockedBps >= 9_900) return { ...base, state: "pass", detail: "burned" }
+  // Pre-graduation pump.fun tokens have no separate LP to lock -- the bonding
+  // curve program holds the liquidity -- so this reads unknown for most fresh
+  // launches and that is a fact about the venue, not a gap in our data.
+  if (s.lpLockedBps === undefined) return { ...base, state: "unknown", detail: "no LP to check yet" }
+  if (s.lpLockedBps >= 9_900) return { ...base, state: "pass", detail: "burned, cannot be pulled" }
   return { ...base, state: "fail", detail: `only ${(s.lpLockedBps / 100).toFixed(1)}% locked` }
 }
 
@@ -96,7 +99,7 @@ function gateHolderConcentration(s: TokenSnapshot): GateResult {
   if (s.topHolderShare === undefined) return { ...base, state: "unknown", detail: "not yet indexed" }
   const pct = (s.topHolderShare * 100).toFixed(1)
   return s.topHolderShare <= 0.15
-    ? { ...base, state: "pass", detail: `top holder ${pct}%` }
+    ? { ...base, state: "pass", detail: `top holder ${pct}%, well spread` }
     : { ...base, state: "fail", detail: `top holder ${pct}%` }
 }
 
@@ -110,7 +113,7 @@ function formatSol(lamports: bigint): string {
 
 function gateLiquidityDepth(s: TokenSnapshot): GateResult {
   const base = { id: "liquidity-depth" as const, label: "LIQUIDITY DEPTH", severity: "elevated" as const }
-  if (s.solReserveLamports === undefined) return { ...base, state: "unknown", detail: "no pool observed" }
+  if (s.solReserveLamports === undefined) return { ...base, state: "unknown", detail: "depth unmeasured" }
   const shown = formatSol(s.solReserveLamports)
   return s.solReserveLamports >= MIN_LIQUIDITY_SOL * LAMPORTS_PER_SOL
     ? { ...base, state: "pass", detail: shown }
@@ -124,7 +127,7 @@ function gateDeployerHistory(s: TokenSnapshot): GateResult {
   }
   if (s.deployerPriorMints === 0) return { ...base, state: "unknown", detail: "first mint by this wallet" }
   return s.deployerPriorRugs === 0
-    ? { ...base, state: "pass", detail: `${s.deployerPriorMints} prior, 0 rugged` }
+    ? { ...base, state: "pass", detail: `${s.deployerPriorMints} prior mints, none rugged` }
     : { ...base, state: "fail", detail: `${s.deployerPriorRugs}/${s.deployerPriorMints} rugged` }
 }
 
