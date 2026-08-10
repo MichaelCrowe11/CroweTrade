@@ -34,6 +34,18 @@ green light to size up.
 - `engine/src/execution/swap.ts` — unchanged. Builds and simulates, never
   sends. Still the entry gate.
 
+- `shared/signer.ts` — Ed25519 signing via WebCrypto, which workerd supports
+  natively, so no crypto dependency ships. 10 tests at the byte level. The
+  guarantee it enforces: signing changes EXACTLY the 64 signature bytes and
+  passes the message through untouched, so "we signed what we simulated" is
+  checkable rather than assumed. A transaction declaring more signers than we
+  hold keys for is REFUSED rather than partially signed.
+  **VERIFIED AGAINST LIVE MAINNET 2026-08-10:** a real Jupiter swap
+  transaction, signed by this module, submitted to `simulateTransaction` with
+  `sigVerify: true`, returned `AccountNotFound` — not a signature error. The
+  network accepted the signature and failed only on the unfunded wallet, which
+  is proof the crypto is correct, obtained without spending anything.
+
 ## What is NOT built yet
 
 - Reconciliation writing confirmed on-chain fills back into `positions`.
