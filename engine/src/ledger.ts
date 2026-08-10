@@ -850,7 +850,7 @@ export class Ledger extends DurableObject<Env> {
         : ageMin === null || ageMin < policy.entry.minTokenAgeMinutes ? "too-new"
         : ageMin > policy.entry.maxTokenAgeMinutes ? "too-old"
         : c.liquidityUsd === null || c.liquidityUsd < policy.entry.minLiquidityUsd ? "thin"
-        : c.changeH1 === null || c.changeH1 > policy.entry.maxChangeH1Pct ? "parabolic"
+        : c.changeH1 !== null && c.changeH1 > policy.entry.maxChangeH1Pct ? "parabolic"
         : verdict === "blocked" || verdict === "insufficient-data" ? `verdict-${verdict}`
         : null
 

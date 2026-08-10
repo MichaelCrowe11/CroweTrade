@@ -105,10 +105,27 @@ export function decideEntries(
     if (ageMin > policy.entry.maxTokenAgeMinutes) continue
     if (ageMin < policy.entry.minTokenAgeMinutes) continue
 
-    // Momentum-exhaustion filter. Unknown change is treated as disqualifying
-    // rather than neutral: we cannot tell a quiet token from a parabolic one,
-    // and the parabolic case is the one that has been losing money.
-    if (c.changeH1 === null || c.changeH1 > policy.entry.maxChangeH1Pct) continue
+    // Momentum-exhaustion filter.
+    //
+    // A KNOWN change above the ceiling always refuses. An UNKNOWN change used
+    // to refuse too, on the reasoning that we cannot tell a quiet token from a
+    // parabolic one. That was right for the promotional feed, where the
+    // listing always carries an hourly change and its absence is odd.
+    //
+    // It is wrong for the launchpad, where `changeH1` is structurally null:
+    // a token minted four minutes ago HAS no hourly change, and treating that
+    // as suspicious refused the entire launchpad universe. Measured 2026-08-10:
+    // with allowedOrigins restricted to launchpad, the engine went six hours
+    // without an entry and the only launchpad entries it had ever made were
+    // tokens that ALSO surfaced on DexScreener and borrowed a changeH1 from it.
+    // A gate that only admits tokens visible in a feed we deliberately stopped
+    // trading is not a gate, it is an accident.
+    //
+    // Unknown is now allowed through HERE and caught downstream by the
+    // first-sight drift check, which answers the same question with better
+    // data: not "what did a third party say this did over an hour" but "how
+    // far has it moved since WE saw it, in the price we are about to pay".
+    if (c.changeH1 !== null && c.changeH1 > policy.entry.maxChangeH1Pct) continue
 
     // Which discovery universes this envelope may buy from. The promotional
     // feed was measured at -$331 realized over 87 closes; launchpad at

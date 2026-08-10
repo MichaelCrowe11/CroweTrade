@@ -123,3 +123,30 @@ test("the boundary is float, not exact, and the test says so", () => {
   assert.equal(hasDrifted(1.0, 1.29, 30), false, "clearly inside")
   assert.equal(hasDrifted(1.0, 1.31, 30), true, "clearly outside")
 })
+
+// ── Momentum filter and absent data ────────────────────────────────────────
+//
+// The interaction that stopped all trading on 2026-08-10: launchpad tokens
+// carry changeH1 = null structurally (a four-minute-old mint has no hourly
+// change), and refusing null refused the entire allowed universe.
+
+/** The predicate as decideEntries applies it. */
+const parabolicRefuses = (changeH1: number | null, ceiling: number): boolean =>
+  changeH1 !== null && changeH1 > ceiling
+
+test("a KNOWN change above the ceiling still refuses", () => {
+  assert.equal(parabolicRefuses(120, 80), true)
+  assert.equal(parabolicRefuses(80.1, 80), true)
+})
+
+test("a known change at or under the ceiling passes", () => {
+  assert.equal(parabolicRefuses(80, 80), false)
+  assert.equal(parabolicRefuses(-30, 80), false)
+})
+
+test("UNKNOWN change passes here, because drift catches it downstream", () => {
+  // Refusing null refused every launchpad token, which is the only origin the
+  // policy admits. The first-sight drift gate answers the same question with
+  // our own recorded price rather than a third party's hourly claim.
+  assert.equal(parabolicRefuses(null, 80), false)
+})
