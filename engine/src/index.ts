@@ -53,6 +53,10 @@ export default {
     // so its log line lands inside this invocation.
     const alert = await stub.maybeAlert()
     if (alert.sent) console.log(JSON.stringify({ msg: "alert", ...alert }))
+    // Operational alerts (breaker trips, kill flips, scan outages) queue
+    // during the tick and send here, on the same no-mail-inside-trading seam.
+    const ops = await stub.flushAlerts()
+    if (ops.sent > 0 || ops.failed > 0) console.log(JSON.stringify({ msg: "opalerts", ...ops }))
   },
 
   async fetch(req, env, _ctx): Promise<Response> {

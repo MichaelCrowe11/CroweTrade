@@ -311,7 +311,12 @@ export class Ledger extends DurableObject<Env> {
       const until = now + PAPER_POLICY.breaker.cooldownMinutes * 60_000
       this.metaSet("breaker_until", String(until))
       this.event("breaker", { tripped: true, kind: "loss-velocity", windowLossUsd: recentLoss + pnlUsd, until })
-      capture(this.env, this.ctx, "breaker_tripped", { kind: "loss_velocity", window_loss_usd: recentLoss + pnlUsd })
+      capture(this.env, this.ctx, "breaker_tripped", {
+        kind: "loss_velocity", window_loss_usd: recentLoss + pnlUsd,
+        policy_hash: this.metaGet("policy_hash"),
+      })
+      this.queueBreakerAlert(now, until,
+        `loss velocity — $${Math.abs(recentLoss + pnlUsd).toFixed(2)} lost inside ${VELOCITY_WINDOW_MS / 60_000} minutes (limit $${VELOCITY_MAX_LOSS_USD})`)
     }
 
     if (reason === "stop-loss" || reason === "safety-exit") {
@@ -321,7 +326,11 @@ export class Ledger extends DurableObject<Env> {
         this.metaSet("breaker_until", String(until))
         this.metaSet("breaker_consec", "0")
         this.event("breaker", { tripped: true, until, afterConsecutiveStops: consec })
-        capture(this.env, this.ctx, "breaker_tripped", { after_stops: consec, cooldown_minutes: PAPER_POLICY.breaker.cooldownMinutes })
+        capture(this.env, this.ctx, "breaker_tripped", {
+          after_stops: consec, cooldown_minutes: PAPER_POLICY.breaker.cooldownMinutes,
+          policy_hash: this.metaGet("policy_hash"),
+        })
+        this.queueBreakerAlert(now, until, `${consec} consecutive stop-loss exits`)
       } else {
         this.metaSet("breaker_consec", String(consec))
       }
@@ -421,6 +430,88 @@ export class Ledger extends DurableObject<Env> {
     return { sent: true, reason: subject }
   }
 
+  /**
+   * Queue an operational alert for the post-tick flush.
+   *
+   * Queued, not sent, because the call sites live inside the trading tick and
+   * an unreachable mail provider must never stall a close or an entry. The
+   * flush runs from the router after the tick, the same seam maybeAlert uses.
+   * Idempotent per key: episode semantics (what counts as "the same event
+   * again") are the CALLER's job, encoded in the key it chooses.
+   */
+  private queueAlert(key: string, subject: string, text: string): void {
+    if (this.metaGet(`opq:${key}`) !== null) return
+    this.metaSet(`opq:${key}`, JSON.stringify({ subject, text, queuedAt: Date.now() }))
+  }
+
+  /**
+   * One breaker episode emails once. Both trip sites re-fire while the
+   * breaker is already open (loss-velocity re-trips on every close inside the
+   * window, pushing `until` forward), so keying on `until` alone would send a
+   * storm. The sent-marker holds the last alerted episode's expiry: a trip is
+   * a NEW episode only after that expiry has passed.
+   */
+  private queueBreakerAlert(now: number, until: number, cause: string): void {
+    if (Number(this.metaGet("opsent:breaker") ?? "0") >= now) return
+    this.metaSet("opsent:breaker", String(until))
+    this.queueAlert(
+      `breaker:${until}`,
+      "CroweTrade: circuit breaker tripped",
+      [
+        `The circuit breaker tripped and new entries are paused until ${new Date(until).toISOString()}.`,
+        "",
+        `Cause: ${cause}.`,
+        "",
+        "Exits keep managing open positions; entries resume automatically when",
+        "the cooldown expires. No action is required — this email exists so a",
+        "stand-down never happens silently.",
+        "",
+        "Still paper. No capital at risk.",
+        "",
+        "https://crowetrade-engine.yellow-block-3adc.workers.dev/api/positions",
+      ].join("\n"),
+    )
+  }
+
+  /**
+   * Send queued operational alerts. Called from the router AFTER the tick, so
+   * mail I/O never sits inside the trading path. A failed send keeps its queue
+   * row and retries next flush — a duplicate email is a lesser bug than an
+   * alert that silently never arrives. NOTE the honest limit: a STALLED engine
+   * cannot email, because nothing is running; stall detection belongs to the
+   * external hourly watch, not to the process being watched.
+   */
+  async flushAlerts(): Promise<{ sent: number; failed: number }> {
+    const apiKey = this.env.RESEND_API_KEY
+    if (!apiKey) return { sent: 0, failed: 0 }
+    const rows = this.sql().exec<{ key: string; value: string }>(
+      "SELECT key, value FROM meta WHERE key LIKE 'opq:%' LIMIT 5",
+    ).toArray()
+    let sent = 0
+    let failed = 0
+    for (const r of rows) {
+      const p = JSON.parse(r.value) as {
+        subject: string; text: string; queuedAt: number; pendingAt?: number
+      }
+      // Claim-before-send, same reasoning as maybeAlert: the input gate does
+      // not hold across the await, and two overlapping flushes must not both
+      // see an unclaimed row. An abandoned claim expires after ten minutes.
+      if (p.pendingAt !== undefined && Date.now() - p.pendingAt < 10 * 60_000) continue
+      this.metaSet(r.key, JSON.stringify({ ...p, pendingAt: Date.now() }))
+      const result = await sendAlert(apiKey, p.subject, p.text)
+      if (result.ok) {
+        this.sql().exec("DELETE FROM meta WHERE key = ?", r.key)
+        this.event("alert_sent", { kind: "operational", key: r.key, subject: p.subject })
+        sent += 1
+      } else {
+        this.metaSet(r.key, JSON.stringify({ subject: p.subject, text: p.text, queuedAt: p.queuedAt }))
+        this.event("alert_failed", { kind: "operational", key: r.key, error: result.error })
+        failed += 1
+      }
+    }
+    return { sent, failed }
+  }
+
   /** The autonomous trading tick. Runs once per cron minute. */
   async tick(): Promise<{ entered: number; exited: number; scanned: number }> {
     const now = Date.now()
@@ -471,8 +562,31 @@ export class Ledger extends DurableObject<Env> {
         this.metaSet("sol_usd", String(solUsd))
         this.metaSet("sol_usd_at", String(now))
       }
+      this.metaSet("scanfail_consec", "0")
     } catch (e) {
       this.event("scan_error", { message: e instanceof Error ? e.message : String(e) })
+      // Five straight failed scans is an outage, not a blip. Alert exactly at
+      // the transition (== 5, not >=) so one episode emails once; the counter
+      // resets on the next healthy scan, arming the alert for the next episode.
+      const consec = Number(this.metaGet("scanfail_consec") ?? "0") + 1
+      this.metaSet("scanfail_consec", String(consec))
+      if (consec === 5) {
+        this.queueAlert(
+          `scanfault:${now}`,
+          "CroweTrade: discovery scan failing",
+          [
+            `The discovery scan has failed ${consec} ticks in a row.`,
+            "",
+            `Last error: ${e instanceof Error ? e.message : String(e)}`,
+            "",
+            "The engine keeps ticking — exits still manage open positions and the",
+            "launchpad source is fetched separately — but no promotional-feed",
+            "candidates are arriving while this persists.",
+            "",
+            "https://crowetrade-engine.yellow-block-3adc.workers.dev/api/positions",
+          ].join("\n"),
+        )
+      }
     }
 
     // Second discovery source, added after the promotional feed was MEASURED
@@ -780,7 +894,32 @@ export class Ledger extends DurableObject<Env> {
     let entered = 0
     const breakerUntil = Number(this.metaGet("breaker_until") ?? "0")
     const breakerOpen = now < breakerUntil
-    if (!killed && !breakerOpen) {
+    // The envelope's own death date, ENFORCED, not just declared. The external
+    // audit's first-listed unfixed finding: expiresAt was schema the tick never
+    // read, meaning an expired consent would have kept trading. An expired
+    // envelope stops NEW risk exactly like the kill switch — exits above this
+    // line keep managing what is already open. An unparseable date counts as
+    // expired: unknown never authorizes anything, entries least of all.
+    const expiresMs = Date.parse(policy.expiresAt)
+    const expired = Number.isNaN(expiresMs) || now >= expiresMs
+    if (expired && this.metaGet("expired_noted") !== policy.expiresAt) {
+      // Once per envelope, not once per tick: the record needs the fact, not
+      // 1,440 copies of it a day. It also emails — an engine that stopped
+      // trading because its consent lapsed must not look merely quiet.
+      this.metaSet("expired_noted", policy.expiresAt)
+      this.event("entry_skipped", { reason: "policy envelope expired", expiresAt: policy.expiresAt })
+      this.queueAlert(
+        `expired:${policy.expiresAt}`,
+        "CroweTrade: policy envelope expired — entries stopped",
+        [
+          `The policy envelope expired at ${policy.expiresAt} and the engine has stopped entering.`,
+          "Exits keep managing open positions. Deploy a fresh envelope to resume.",
+          "",
+          "https://crowetrade-engine.yellow-block-3adc.workers.dev/api/positions",
+        ].join("\n"),
+      )
+    }
+    if (!killed && !breakerOpen && !expired) {
       const day = new Date(now).toISOString().slice(0, 10)
       const spentToday = Number(this.metaGet(`spend:${day}`) ?? "0")
       let spentRunning = spentToday
@@ -1437,7 +1576,24 @@ export class Ledger extends DurableObject<Env> {
   setKill(on: boolean): void {
     this.metaSet("kill", on ? "1" : "0")
     this.event("kill", { on })
-    capture(this.env, this.ctx, "kill_switch", { on })
+    capture(this.env, this.ctx, "kill_switch", { on, policy_hash: this.metaGet("policy_hash") })
+    // Every flip emails, because the kill switch is an authenticated action:
+    // if this email arrives and Michael did not flip it, the admin token is
+    // compromised and that is worth knowing within a minute, not at the next
+    // manual check of the book.
+    this.queueAlert(
+      `kill:${Date.now()}`,
+      `CroweTrade: kill switch ${on ? "ON" : "OFF"}`,
+      [
+        on
+          ? "The kill switch is ON. New entries are stopped; exits keep managing open positions."
+          : "The kill switch is OFF. The engine will resume entering on the next tick.",
+        "",
+        "If you did not do this, the admin token is compromised — rotate it now.",
+        "",
+        "https://crowetrade-engine.yellow-block-3adc.workers.dev/api/positions",
+      ].join("\n"),
+    )
   }
 
   /** Veto: allowed only inside the policy window; executes next tick. */
