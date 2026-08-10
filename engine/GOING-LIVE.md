@@ -59,11 +59,27 @@ green light to size up.
   balance survives. `tca()` compares quoted against realized — the real number
   the old Python stack only claimed to compute.
 
+- **WIRED INTO THE TICK (2026-08-10).** Entries and exits both route through
+  `live.ts` when — and only when — `liveEnabled()` is true, which requires all
+  three of: `LIVE_TRADING` exactly `"1"`, a `TRADING_KEYPAIR` present, and the
+  envelope's product being `crowetrade-live`. With any one absent the engine
+  behaves exactly as it did yesterday, which is what makes the paper record a
+  meaningful rehearsal rather than a different program.
+
+  Three details worth knowing before you arm:
+  - Positions carry `execution` ('paper' | 'live') and the on-chain
+    `entry_sig` / `exit_sig`, so any live row is auditable against the chain by
+    someone who does not trust this engine's accounting. `execution` defaults
+    to 'paper', so the 168 historical closes stay correctly labelled simulated.
+  - A **paper** position never takes the live exit path, even while live is
+    armed. Checked per position, not globally.
+  - A live exit that FAILS does not close the position at an invented price.
+    It stays open, the next tick retries, and `live_exit_failed` is recorded.
+
 ## What is NOT built yet
 
-- Wiring `live.ts` into the tick, so the engine calls it instead of paper
-  fills. Deliberately last: every piece is testable in isolation first.
 - A second-machine test of the whole path.
+- Counsel sign-off on custody and the waiver. Still the real gate.
 
 ---
 

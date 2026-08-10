@@ -152,3 +152,28 @@ export async function signTransaction(txBase64: string, keypairJson: string): Pr
   signed.set(sig, layout.signaturesAt)
   return toBase64(signed)
 }
+
+/**
+ * Base58 (Bitcoin alphabet), which is how Solana renders addresses.
+ *
+ * Hand-rolled rather than imported: this module's whole point is having no
+ * runtime dependencies so it can be tested under strip-types, and an address
+ * encoder is twelve lines. Leading zero BYTES become leading '1' CHARACTERS —
+ * that rule is easy to omit and produces addresses that are wrong only for
+ * keys that happen to start with a zero, which is the worst kind of bug.
+ */
+export function base58(bytes: Uint8Array): string {
+  const A = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+  let n = 0n
+  for (const b of bytes) n = n * 256n + BigInt(b)
+  let out = ""
+  while (n > 0n) {
+    out = A[Number(n % 58n)] + out
+    n /= 58n
+  }
+  for (const b of bytes) {
+    if (b !== 0) break
+    out = "1" + out
+  }
+  return out
+}

@@ -29,7 +29,7 @@ import {
   type MintFacts,
 } from "../../shared/solana.js"
 import { evaluateGates, combineVerdict, type Verdict } from "../../shared/gates.js"
-import { PAPER_POLICY, policyHash } from "../../shared/policy.js"
+import { PAPER_POLICY, policyHash, type PolicyEnvelope } from "../../shared/policy.js"
 import {
   decideEntries,
   decideExits,
@@ -39,6 +39,9 @@ import {
 } from "./strategy.js"
 import { computeFeatures } from "../../shared/features.js"
 import { fit, score, buildFeatureVector, type FeatureSnapshot } from "../../shared/model.js"
+import { liveArmed } from "../../shared/preflight.js"
+import { parseKeypair, base58 } from "../../shared/signer.js"
+import { executeSwap, walletBalanceSol } from "./execution/live.js"
 import { ARMED_MODEL } from "../../shared/armed-model.js"
 import { quoteBuy, quoteSell, LAMPORTS_PER_SOL } from "./execution/jupiter.js"
 import { dryRunSwap } from "./execution/swap.js"
@@ -207,6 +210,29 @@ export class Ledger extends DurableObject<Env> {
       } catch {
         // Column already present.
       }
+      // Live execution provenance. `execution` defaults to 'paper' so every
+      // row ever written before this migration is correctly labelled as
+      // simulated: a record that cannot distinguish real fills from imagined
+      // ones is worse than no record, and defaulting the other way would
+      // retroactively claim 168 paper closes were real.
+      try {
+        sql.exec("ALTER TABLE positions ADD COLUMN execution TEXT NOT NULL DEFAULT 'paper'")
+      } catch {
+        // Column already present.
+      }
+      // On-chain signatures for the entry and the exit, so any live row can be
+      // audited against the chain by anyone, including someone who does not
+      // trust this engine's own accounting.
+      try {
+        sql.exec("ALTER TABLE positions ADD COLUMN entry_sig TEXT")
+      } catch {
+        // Column already present.
+      }
+      try {
+        sql.exec("ALTER TABLE positions ADD COLUMN exit_sig TEXT")
+      } catch {
+        // Column already present.
+      }
       this.schemaReady = true
     }
     return sql
@@ -256,6 +282,44 @@ export class Ledger extends DurableObject<Env> {
    * what the last trade printed; it is not what we can get out at, and on a
    * thin pool the gap between the two is the entire result.
    */
+  /**
+   * Is live execution enabled for THIS policy?
+   *
+   * Three independent conditions, all required: the environment flag is
+   * exactly "1", a key is present, and the envelope itself is a live one.
+   * Checked per call rather than cached, so removing the secret takes effect
+   * on the next trade instead of the next deploy.
+   */
+  private liveEnabled(policy: PolicyEnvelope): boolean {
+    return liveArmed(this.env as unknown as Record<string, unknown>)
+      && policy.product === "crowetrade-live"
+  }
+
+  /**
+   * The trading wallet's public address, derived from the configured keypair.
+   *
+   * Returns null on any malformation rather than throwing: a bad key must
+   * degrade to "cannot trade live" rather than taking down the tick that also
+   * manages existing positions.
+   */
+  private tradingOwner(): string | null {
+    const raw = this.env.TRADING_KEYPAIR
+    if (typeof raw !== "string" || raw.length === 0) return null
+    try {
+      return base58(parseKeypair(raw).publicKey)
+    } catch {
+      return null
+    }
+  }
+
+  /** Was this position opened with real funds? Paper positions must never
+   *  take the live exit path, even while live trading is armed. */
+  private positionIsLive(id: string): boolean {
+    return this.sql().exec<{ execution: string }>(
+      "SELECT execution FROM positions WHERE id = ?", id,
+    ).toArray()[0]?.execution === "live"
+  }
+
   private async closePosition(
     p: OpenPosition,
     exitPriceUsd: number,
@@ -272,7 +336,44 @@ export class Ledger extends DurableObject<Env> {
     let pricing = "quote"
 
     const q = baseUnits > 0n ? await quoteSell(p.mint, baseUnits, SLIPPAGE_BPS) : null
-    if (q && solUsd > 0) {
+    let exitSig: string | null = null
+    const isLive = this.positionIsLive(p.id)
+
+    if (q && solUsd > 0 && isLive && this.liveEnabled(PAPER_POLICY)) {
+      // ── LIVE EXIT ────────────────────────────────────────────────────
+      //
+      // No entry guard here, deliberately. The kill switch, the daily cap and
+      // the breaker stop NEW risk; none of them may prevent closing risk
+      // already taken. A position we cannot sell is the worst state this
+      // system has, worse than any single loss.
+      const owner = this.tradingOwner()
+      const key = this.env.TRADING_KEYPAIR as string
+      const r = owner
+        ? await executeSwap(q.raw, owner, key, p.mint, "exit", null)
+        : null
+      if (r?.ok && r.fill) {
+        // Negative solDelta on a sell means SOL ARRIVED; proceeds are its
+        // magnitude. Reading the quote here instead would re-introduce the
+        // predicted-vs-realized gap this whole layer exists to close.
+        proceeds = (Number(-r.fill.solDeltaLamports) / 1e9) * solUsd
+        impact = q.priceImpactPct
+        route = q.route
+        exitSig = r.signature
+        this.event("live_exit", {
+          symbol: p.symbol, mint: p.mint, signature: exitSig, reason,
+          solReceived: Number(-r.fill.solDeltaLamports) / 1e9,
+          quotedSol: Number(q.outAmount) / LAMPORTS_PER_SOL,
+        })
+      } else {
+        // A live position we failed to sell is NOT closed at a made-up price.
+        // It stays open so the next tick retries, and the operator is told.
+        this.event("live_exit_failed", {
+          symbol: p.symbol, mint: p.mint, reason, error: r?.error ?? "no owner",
+          signature: r?.signature ?? null, paidFee: r ? !r.refusedBeforeSend : false,
+        })
+        return
+      }
+    } else if (q && solUsd > 0) {
       proceeds = (Number(q.outAmount) / LAMPORTS_PER_SOL) * solUsd
       impact = q.priceImpactPct
       route = q.route
@@ -339,9 +440,9 @@ export class Ledger extends DurableObject<Env> {
     }
     this.sql().exec(
       `UPDATE positions SET closed_at = ?, exit_price = ?, exit_reason = ?, pnl_usd = ?, pnl_pct = ?,
-              exit_pricing = ?
+              exit_pricing = ?, exit_sig = ?
        WHERE id = ?`,
-      now, effective, reason, pnlUsd, pnlPct, pricing, p.id,
+      now, effective, reason, pnlUsd, pnlPct, pricing, exitSig, p.id,
     )
     this.event("exit", { id: p.id, symbol: p.symbol, reason, pnlUsd, pnlPct, impact, route })
     capture(this.env, this.ctx, "paper_exit", {
@@ -1025,16 +1126,77 @@ export class Ledger extends DurableObject<Env> {
         // Priority fee is a real cost of entering and must be charged to the
         // position, or the record quietly understates what trading costs.
         const feeSol = (sim.priorityFeeLamports ?? 0) / LAMPORTS_PER_SOL
-        const sizeUsd = (e.sizeSol + feeSol) * solUsd
-        const tokenAmount = Number(q.outAmount) / 10 ** decimals
+        let sizeUsd = (e.sizeSol + feeSol) * solUsd
+        let tokenAmount = Number(q.outAmount) / 10 ** decimals
+        let execution = "paper"
+        let entrySig: string | null = null
+
+        // ── LIVE ENTRY ──────────────────────────────────────────────────
+        //
+        // Reached only when both environment locks are open AND the envelope
+        // is a live one. Everything above this point is identical for paper
+        // and live, which is the property that makes the paper record
+        // meaningful as a rehearsal.
+        //
+        // The numbers written to the book come from the CHAIN, not from the
+        // quote: `q.outAmount` is what Jupiter predicted and `fill.tokenDelta`
+        // is what arrived. Recording the prediction would reintroduce the
+        // exact error the 20x slippage incident taught.
+        if (this.liveEnabled(policy)) {
+          const owner = this.tradingOwner()
+          const key = this.env.TRADING_KEYPAIR as string
+          const balance = await walletBalanceSol(owner ?? "")
+          if (!owner || balance === null) {
+            this.event("entry_skipped", { symbol: c.symbol, mint: c.mint, reason: "wallet unreadable" })
+            continue
+          }
+          const result = await executeSwap(q.raw, owner, key, c.mint, "entry", {
+            intent: {
+              mint: c.mint, sizeSol: e.sizeSol, spentTodaySol: spentRunning,
+              openPositions: this.openPositions().length, impactPct,
+              simulationOk: sim.ok, walletBalanceSol: balance,
+            },
+            ctx: { policy, nowMs: now, killed, liveArmed: true },
+          })
+          if (!result.ok || !result.fill) {
+            this.event("entry_skipped", {
+              symbol: c.symbol, mint: c.mint, reason: "live entry refused",
+              error: result.error, signature: result.signature, paidFee: !result.refusedBeforeSend,
+            })
+            continue
+          }
+          // Realized, from pre/post balances.
+          const f = result.fill
+          tokenAmount = Number(f.tokenDelta) / 10 ** f.decimals
+          sizeUsd = (Number(f.solDeltaLamports) / 1e9) * solUsd
+          execution = "live"
+          entrySig = result.signature
+          if (tokenAmount <= 0) {
+            // Confirmed, but no tokens arrived. Something is wrong that this
+            // code cannot reason about, so it records the event and does NOT
+            // write a position it would then try to sell.
+            this.event("entry_skipped", {
+              symbol: c.symbol, mint: c.mint, reason: "live fill delivered no tokens",
+              signature: entrySig,
+            })
+            continue
+          }
+          this.event("live_entry", {
+            symbol: c.symbol, mint: c.mint, signature: entrySig,
+            solSpent: Number(f.solDeltaLamports) / 1e9, tokens: tokenAmount,
+            quotedTokens: Number(q.outAmount) / 10 ** decimals,
+          })
+        }
+
         if (tokenAmount <= 0) continue
         const entryPrice = sizeUsd / tokenAmount
         const id = crypto.randomUUID()
         this.sql().exec(
           `INSERT INTO positions
-           (id, mint, symbol, entry_price, size_sol, size_usd, token_amount, opened_at, policy_hash, verdict_entry, priced_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'quote')`,
+           (id, mint, symbol, entry_price, size_sol, size_usd, token_amount, opened_at, policy_hash, verdict_entry, priced_by, execution, entry_sig)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'quote', ?, ?)`,
           id, c.mint, c.symbol, entryPrice, e.sizeSol, sizeUsd, tokenAmount, now, hash, e.verdict,
+          execution, entrySig,
         )
         this.sql().exec(
           "UPDATE decisions SET entered = 1, entry_impact_pct = ? WHERE mint = ? AND labeled = 0",

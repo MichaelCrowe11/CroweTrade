@@ -12,6 +12,10 @@
   // binary, and the tools read the Durable Object in-process instead of looping
   // back over HTTP.
   "ai": { "binding": "AI" },
+  // Declared so `wrangler types` puts them on Env. The VALUES are secrets set
+  // with `wrangler secret put` and never live in this file. Both are absent
+  // until the dust test, which leaves the live path structurally inert.
+  "vars": {},
   "triggers": { "crons": ["* * * * *"] },
   "assets": { "directory": "./public" },
   "durable_objects": {

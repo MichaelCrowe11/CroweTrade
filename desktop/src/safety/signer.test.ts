@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
   parseKeypair, readCompactU16, layoutOf, fromBase64, toBase64,
-  signTransaction, SIG_LEN, KEYPAIR_LEN,
+  signTransaction, base58, SIG_LEN, KEYPAIR_LEN,
 } from "../../../shared/signer.ts"
 
 /**
@@ -102,4 +102,19 @@ test("a multi-signer transaction is REFUSED, not partially signed", async () => 
   // would produce a transaction that can never land, after paying a fee.
   const tx = Uint8Array.from([2, ...new Array(SIG_LEN * 2).fill(0), 7, 7])
   await assert.rejects(() => signTransaction(toBase64(tx), KEYPAIR), /one key/)
+})
+
+test("base58 encodes addresses, and leading zero bytes become leading ones", () => {
+  // The rule that is easy to omit: a leading zero BYTE is a leading '1'
+  // CHARACTER, so keys starting with zero would otherwise encode short.
+  assert.equal(base58(Uint8Array.from([0, 0, 1])), "112")
+  assert.equal(base58(Uint8Array.from([])), "")
+  // A known vector: 32 zero bytes is the system program address.
+  assert.equal(base58(new Uint8Array(32)), "1".repeat(32))
+})
+
+test("base58 round-trips a real derived address length", () => {
+  // Solana addresses are 32 bytes and render as 32-44 base58 characters.
+  const addr = base58(Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 13) % 256))
+  assert.ok(addr.length >= 32 && addr.length <= 44, `unexpected length ${addr.length}`)
 })
