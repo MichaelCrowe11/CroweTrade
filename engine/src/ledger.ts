@@ -39,6 +39,7 @@ import {
 } from "./strategy.js"
 import { computeFeatures } from "../../shared/features.js"
 import { hasDrifted } from "../../shared/trajectory.js"
+import { validateProposal } from "../../shared/proposal.js"
 import { fit, score, buildFeatureVector, type FeatureSnapshot } from "../../shared/model.js"
 import { liveArmed } from "../../shared/preflight.js"
 import { parseKeypair, base58, verifyPolicySignature } from "../../shared/signer.js"
@@ -234,6 +235,19 @@ export class Ledger extends DurableObject<Env> {
       } catch {
         // Column already present.
       }
+      // Agent policy proposals. Inert records: the engine never reads this
+      // table to decide anything, it exists so a human can review what an
+      // agent suggested and why.
+      sql.exec(`CREATE TABLE IF NOT EXISTS proposals (
+        id TEXT PRIMARY KEY,
+        at INTEGER NOT NULL,
+        rationale TEXT,
+        changes TEXT NOT NULL,
+        ok INTEGER NOT NULL,
+        entirely_noop INTEGER NOT NULL,
+        errors TEXT,
+        status TEXT NOT NULL DEFAULT 'pending'
+      )`)
       this.schemaReady = true
     }
     return sql
@@ -1696,6 +1710,62 @@ export class Ledger extends DurableObject<Env> {
    * reports holder spread as unknown, which is not a shortcut: we genuinely
    * did not measure it, and saying so is the whole three-state discipline.
    */
+  /**
+   * Validate an agent's policy proposal and record it for review.
+   *
+   * Writes to a `proposals` table and NOTHING else. The engine's behaviour is
+   * a function of the deployed envelope, so a stored proposal is inert by
+   * construction: it is a note to the operator, not a configuration.
+   *
+   * Validation happens against the policy actually running, which is the
+   * whole point. An agent recommending something already in effect gets told
+   * so immediately rather than sending a human off to implement it twice.
+   */
+  async proposePolicy(args: unknown): Promise<unknown> {
+    const a = (args ?? {}) as { changes?: unknown; rationale?: unknown }
+    const changes = Array.isArray(a.changes)
+      ? a.changes.filter((c): c is { path: string; to: unknown } =>
+          typeof c === "object" && c !== null && typeof (c as { path?: unknown }).path === "string")
+      : []
+    const rationale = typeof a.rationale === "string" ? a.rationale : ""
+
+    const result = validateProposal(PAPER_POLICY, changes)
+    const id = crypto.randomUUID()
+    this.sql().exec(
+      `INSERT INTO proposals (id, at, rationale, changes, ok, entirely_noop, errors, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      id, Date.now(), rationale, JSON.stringify(result.changes),
+      result.ok ? 1 : 0, result.entirelyNoop ? 1 : 0, JSON.stringify(result.errors),
+    )
+    this.event("policy_proposed", {
+      id, ok: result.ok, noop: result.entirelyNoop,
+      paths: result.changes.map((c) => c.path),
+    })
+    return {
+      id,
+      ...result,
+      note: result.entirelyNoop
+        ? "The running policy ALREADY does this. Nothing to change; say so plainly."
+        : result.ok
+          ? "Recorded for the operator to review and sign. NOTHING has been applied and no trade can result from this."
+          : "Not recorded as actionable; fix the errors above.",
+      appliedAutomatically: false,
+    }
+  }
+
+  /** Proposals awaiting review, newest first. */
+  listProposals(): unknown {
+    return this.sql().exec<{
+      id: string; at: number; rationale: string | null; changes: string
+      ok: number; entirely_noop: number; errors: string | null; status: string
+    }>("SELECT * FROM proposals ORDER BY at DESC LIMIT 50").toArray().map((r) => ({
+      id: r.id, at: r.at, rationale: r.rationale, status: r.status,
+      ok: r.ok === 1, entirelyNoop: r.entirely_noop === 1,
+      changes: JSON.parse(r.changes) as unknown,
+      errors: JSON.parse(r.errors ?? "[]") as unknown,
+    }))
+  }
+
   async gatesFor(mints: string[], detail?: string): Promise<unknown> {
     configureRpc(this.env.HELIUS_API_KEY)
     const signal = AbortSignal.timeout(8_000)

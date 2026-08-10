@@ -139,8 +139,8 @@ export default {
       // hand to the open internet, even read-only.
       // The Analyst. Authenticated because inference costs money and an open
       // endpoint is someone else's bill; the model itself is read-only by
-      // construction (its only three tools are reads), so the token guards
-      // spend, not capability.
+      // construction (proposals write nothing an engine consults), so the
+      // token guards spend, not capability.
       if (url.pathname === "/api/analyst" && req.method === "POST") {
         if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
         const body = (await req.json().catch(() => ({}))) as { question?: string }
@@ -151,6 +151,7 @@ export default {
           state: () => stub.summary(),
           exitSweep: () => stub.exitSweep(),
           modelFit: () => stub.trainModel(),
+          proposePolicy: (args) => stub.proposePolicy(args),
         })
         return new Response(stream, {
           headers: {
@@ -212,6 +213,13 @@ export default {
           : new Response(out as ReadableStream, {
               headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", ...CORS },
             })
+      }
+
+      // Proposals an agent has recorded, for the operator to review. Read-only
+      // and admin-gated: it is a queue of suggestions, not a control surface.
+      if (url.pathname === "/api/proposals" && req.method === "GET") {
+        if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
+        return json(await ledger(env).listProposals())
       }
 
       if (url.pathname === "/api/research" && req.method === "POST") {
