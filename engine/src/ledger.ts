@@ -1347,6 +1347,9 @@ export class Ledger extends DurableObject<Env> {
     // quarantined price-scale wreckage. A sample size that includes rows the
     // labeler refuses to touch is not a sample size, and reading it as one is
     // exactly how the original bad launchpad claim got believed.
+    // Which origins the CURRENT envelope permits. Read from the policy rather
+    // than hardcoded, so it cannot drift out of step with what the engine does.
+    const ADMITTED_ORIGINS = new Set<string>([...PAPER_POLICY.entry.allowedOrigins, "held"])
     const byOrigin = sql.exec<{
       origin: string; n: number; voided: number; labeled: number; died: number | null
       entered_n: number; entered_ret: number | null; refused_ret: number | null
@@ -1369,6 +1372,16 @@ export class Ledger extends DurableObject<Env> {
       deathRate: (r.labeled ?? 0) > 0 ? Number((((r.died ?? 0) / (r.labeled ?? 1))).toFixed(3)) : null,
       avgForwardRetEnteredPct: r.entered_ret === null ? null : Number(r.entered_ret.toFixed(1)),
       avgForwardRetRefusedPct: r.refused_ret === null ? null : Number(r.refused_ret.toFixed(1)),
+      // `entered` above is LIFETIME and therefore describes policies that are
+      // no longer running. That is actively misleading: on 2026-08-10 the
+      // Analyst read profile entered=42, concluded the profile feed should be
+      // "filtered harder or dropped entirely", and recommended work that had
+      // shipped hours earlier -- the allowlist had already dropped it, and
+      // every one of those 42 predated the change.
+      //
+      // `admitted` answers the question a reader actually has: may this
+      // origin be traded RIGHT NOW, under the policy that is running?
+      admitted: ADMITTED_ORIGINS.has(r.origin),
     }))
 
     // Why candidates are being turned away, counted. A gate that rejects
