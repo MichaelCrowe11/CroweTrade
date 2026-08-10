@@ -729,7 +729,8 @@ export class Ledger extends DurableObject<Env> {
       const verdict = combineVerdict(evaluateGates(c.snapshot))
       const ageMin = c.createdAt === null ? null : (now - c.createdAt) / 60_000
       const skipReason =
-        (c.origin === "boost" || c.origin === "both") && policy.entry.excludeBoosted ? "boosted"
+        c.origin !== "held" && !policy.entry.allowedOrigins.includes(c.origin)
+          ? `origin-${c.origin}`
         : ageMin === null || ageMin < policy.entry.minTokenAgeMinutes ? "too-new"
         : ageMin > policy.entry.maxTokenAgeMinutes ? "too-old"
         : c.liquidityUsd === null || c.liquidityUsd < policy.entry.minLiquidityUsd ? "thin"

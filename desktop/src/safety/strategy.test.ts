@@ -44,3 +44,37 @@ test("zero starting price or liquidity refuses rather than dividing", () => {
   assert.equal(trajectoryConfirms(t([0, 1, 2], [5000, 5000, 5000]), 3), false)
   assert.equal(trajectoryConfirms(t([1, 1.1, 1.2], [0, 100, 200]), 3), false)
 })
+
+// ── Discovery allowlist ────────────────────────────────────────────────────
+//
+// The change that took the promotional feed out of the book. It is an
+// ALLOWLIST on purpose: the failure mode being designed against is a new
+// discovery source getting added to the scanner and inheriting permission to
+// spend money because nobody remembered to exclude it.
+
+/** The predicate as decideEntries applies it, isolated so it can be pinned
+ *  without constructing a whole Candidate and policy envelope. */
+const originAllowed = (origin: string, allowed: string[]): boolean =>
+  origin === "held" || allowed.includes(origin)
+
+test("allowlist admits only named origins", () => {
+  assert.equal(originAllowed("launchpad", ["launchpad"]), true)
+  assert.equal(originAllowed("profile", ["launchpad"]), false)
+  assert.equal(originAllowed("boost", ["launchpad"]), false)
+  assert.equal(originAllowed("both", ["launchpad"]), false)
+})
+
+test("an unrecognised new source is refused by default, not admitted", () => {
+  // The whole point of an allowlist over an exclusion list.
+  assert.equal(originAllowed("some-future-feed", ["launchpad"]), false)
+})
+
+test("held is always permitted: it re-prices an open position, not a purchase", () => {
+  assert.equal(originAllowed("held", ["launchpad"]), true)
+  assert.equal(originAllowed("held", []), true)
+})
+
+test("an empty allowlist buys nothing at all", () => {
+  assert.equal(originAllowed("launchpad", []), false)
+  assert.equal(originAllowed("profile", []), false)
+})

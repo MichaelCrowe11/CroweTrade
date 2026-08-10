@@ -23,6 +23,8 @@
  * connect in the execution layer.
  */
 
+import type { DiscoveryOrigin } from "./dexscreener.js"
+
 export interface PolicyEnvelope {
   version: 1
   product: "crowetrade-paper" | "crowetrade-live"
@@ -60,13 +62,24 @@ export interface PolicyEnvelope {
      */
     maxEntryImpactPct: number
     /**
-     * Refuse paid-promotion listings outright.
+     * Discovery sources this envelope may trade. An ALLOWLIST, not a set of
+     * exclusions: a source added to the scanner later must be opted in
+     * deliberately rather than inheriting permission to spend money.
      *
-     * The boosts feed is advertising: someone paid to surface the token at
-     * this moment, which is precisely when they need buyers. Profile listings
-     * are promotional too, but boosts select hardest for distribution events.
+     * Narrowed to launchpad only on 2026-08-10, on REALIZED PnL rather than
+     * forward returns. Of the lifetime -$385 across 145 quote-priced closes,
+     * the promotional profile feed accounts for -$331 over 87 closes (-17.7%
+     * average). Launchpad over 40 closes is -$16.67 (-3.6%), which is inside
+     * the cost of trading. The two universes have different SHAPES, not just
+     * different means: launchpad's 3 take-profits averaged +242.8% and its 9
+     * time-stops +33.5%, so 30% of its trades paid for the other 70%. The
+     * profile feed has no such tail, which is what "structurally
+     * unprofitable" has meant here since the n=87 forward-return test.
+     *
+     * "held" is always permitted implicitly; it is not a discovery source but
+     * the re-pricing of a position already open.
      */
-    excludeBoosted: boolean
+    allowedOrigins: DiscoveryOrigin[]
     /**
      * Require this many of OUR OWN minute-ticks before entering, with price
      * higher than at the start of the window and liquidity not draining.
@@ -167,7 +180,7 @@ export const PAPER_POLICY: PolicyEnvelope = {
     minLiquidityUsd: 3_000,
     maxChangeH1Pct: 80,
     maxEntryImpactPct: 1.5,
-    excludeBoosted: true,
+    allowedOrigins: ["launchpad"],
     minObservedTicks: 3,
     /**
      * Armed 2026-08-09. The exit sweep closed the other door: the shipped

@@ -110,10 +110,12 @@ export function decideEntries(
     // and the parabolic case is the one that has been losing money.
     if (c.changeH1 === null || c.changeH1 > policy.entry.maxChangeH1Pct) continue
 
-    // Paid promotion is a distribution event by definition.
-    // "both" is a boosted listing that ALSO has a profile; excluding only
-    // "boost" let paid promotion in through the side entrance.
-    if (policy.entry.excludeBoosted && (c.origin === "boost" || c.origin === "both")) continue
+    // Which discovery universes this envelope may buy from. The promotional
+    // feed was measured at -$331 realized over 87 closes; launchpad at
+    // -$16.67 over 40 with a tail that actually pays.
+    // Allowlist, so a discovery source added later cannot spend money by
+    // default. "held" is a re-price of an open position, not a discovery.
+    if (c.origin !== "held" && !policy.entry.allowedOrigins.includes(c.origin)) continue
 
     // Our own tape must agree before a listing gets our capital.
     if (!trajectoryConfirms(trajectories.get(c.mint), policy.entry.minObservedTicks)) continue
