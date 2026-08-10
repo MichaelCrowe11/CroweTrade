@@ -157,6 +157,11 @@ export default function App() {
   // One controller per mount, aborted on unmount, so an in-flight request from
   // a closing window cannot resolve into a setState on a dead component.
   const abortRef = useRef<AbortController | null>(null)
+  // `load` is memoised with no deps, so it cannot read `selected` directly
+  // without capturing the value from first render. The engine resolves the
+  // expensive holder-spread lookup for exactly one mint per scan, and it has
+  // to be the one the operator is actually looking at.
+  const selectedRef = useRef<string | null>(null)
 
   const load = useCallback(async () => {
     abortRef.current?.abort()
@@ -182,17 +187,55 @@ export default function App() {
         return next
       })
       setError(null)
-      setSelected((cur) => cur ?? scan.candidates[0]?.mint ?? null)
+      setSelected((cur) => {
+        const next = cur ?? scan.candidates[0]?.mint ?? null
+        selectedRef.current = next
+        return next
+      })
 
-      const facts = await fetchMintFacts(
-        scan.candidates.map((c) => c.mint),
-        controller.signal,
-      )
-      if (controller.signal.aborted || facts.size === 0) return
+      // Gate inputs come from the ENGINE, not from this app's own chain reads.
+      //
+      // The terminal used to resolve mint and freeze authority here against
+      // the public RPC and could resolve nothing else, so LP lock, holder
+      // spread and deployer history read "unknown" on screen for every token.
+      // That understated what the system knew: the engine holds the Helius
+      // key, the creators table, and the labeled corpus that turns a deployer
+      // address into a rug history. Same gates.ts evaluates below either way,
+      // so this changes the INPUTS and never the meaning.
+      //
+      // Falls back to the local read when the bridge is absent (vite in a
+      // plain browser) so the panel still works while developing.
+      const mints = scan.candidates.map((c) => c.mint)
+      const fromEngine = window.crowetrade?.engineGates
+        ? await window.crowetrade.engineGates(mints, selectedRef.current ?? mints[0])
+        : {}
+      if (controller.signal.aborted) return
+
+      const local =
+        Object.keys(fromEngine).length === 0
+          ? await fetchMintFacts(mints, controller.signal).catch(() => new Map())
+          : new Map()
+      if (controller.signal.aborted) return
 
       setCandidates((rows) =>
         rows.map((row) => {
-          const f = facts.get(row.mint)
+          const e = fromEngine[row.mint]
+          if (e) {
+            return {
+              ...row,
+              snapshot: {
+                ...row.snapshot,
+                mintAuthority: e.mintAuthority,
+                freezeAuthority: e.freezeAuthority,
+                // Undefined stays undefined: an absent field means the engine
+                // did not measure it, and unknown must never render as a pass.
+                topHolderShare: e.topHolderShare,
+                deployerPriorMints: e.deployerPriorMints,
+                deployerPriorRugs: e.deployerPriorRugs,
+              },
+            }
+          }
+          const f = local.get(row.mint)
           if (!f) return row
           return {
             ...row,
@@ -292,7 +335,12 @@ export default function App() {
             type="button"
             className="scan__row"
             aria-selected={c.mint === selected}
-            onClick={() => setSelected(c.mint)}
+            onClick={() => {
+              // Keep the ref in step so the NEXT scan resolves holder spread
+              // for what the operator just selected, not the previous token.
+              selectedRef.current = c.mint
+              setSelected(c.mint)
+            }}
           >
             <span className="scan__symbol">{c.symbol}</span>
             {c.changeH1 !== null && (

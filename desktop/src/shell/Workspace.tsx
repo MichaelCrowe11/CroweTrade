@@ -28,9 +28,14 @@ import { DURATIONS, EASINGS, MAGNITUDES } from "./motion.js"
 /* Sensible opening proportions so a fresh row does not slice itself into
  * equal thirds: lists and lamp grids start narrower, readouts wider. Types
  * without an entry share the remainder equally. */
+/* Width is attention. The scan list is the tape the operator reads
+ * continuously and it was the NARROWEST panel at 26% while the chart took
+ * whatever was left, so a single price got more width than the whole market.
+ * Gates and book both carry dense labelled readouts that were wrapping. */
 const DEFAULT_SIZES: Partial<Record<Panel["type"], string>> = {
-  scan: "26%",
-  gates: "30%",
+  scan: "30%",
+  chart: "26%",
+  gates: "32%",
   book: "36%",
   calibration: "42%",
 }

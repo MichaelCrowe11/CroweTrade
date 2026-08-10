@@ -20,6 +20,18 @@ interface Window {
   crowetrade?: {
     platform?: string
     candles?: (pool: string) => Promise<number[][]>
+    /** Gate snapshot fields from the engine, which resolves LP lock, holder
+     *  spread and deployer history this app cannot see. Empty on failure. */
+    engineGates?: (
+      mints: string[],
+      detail?: string,
+    ) => Promise<Record<string, {
+      mintAuthority?: string | null
+      freezeAuthority?: string | null
+      topHolderShare?: number
+      deployerPriorMints?: number
+      deployerPriorRugs?: number
+    }>>
     ask?: (question: string) => Promise<{ text: string; consulted: string[] }>
     onAskDelta?: (cb: (delta: string) => void) => () => void
     onAskTool?: (cb: (name: string) => void) => () => void

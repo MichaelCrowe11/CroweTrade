@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld("crowetrade", {
   platform: process.platform,
   /** 1-minute OHLCV for a pool, [ts, o, h, l, c, v] ascending. [] on failure. */
   candles: (pool: string): Promise<number[][]> => ipcRenderer.invoke("candles", pool),
+  engineGates: (mints: string[], detail?: string): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke("engine-gates", mints, detail),
   /** Ask the Analyst. Resolves with the whole answer; deltas stream as events. */
   ask: (question: string): Promise<{ text: string; consulted: string[] }> =>
     ipcRenderer.invoke("ask", question),

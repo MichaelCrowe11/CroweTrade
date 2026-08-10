@@ -344,6 +344,41 @@ void app.whenReady().then(() => {
     return runWorkflow(id, (evt) => win?.webContents.send("orch:event", evt))
   })
 
+  /**
+   * Gate inputs from the engine, which sees more than this app can.
+   *
+   * The terminal's own feed cannot resolve LP lock, holder spread or deployer
+   * history: it has no Helius key (correctly, that is a server secret) and no
+   * labeled corpus. The engine has all three. This returns snapshot FIELDS,
+   * not verdicts, so the renderer keeps evaluating with the same shared
+   * gates.ts the engine uses and the two cannot disagree about meaning.
+   *
+   * Failure is empty, never fabricated: if the engine is unreachable the
+   * gates stay unknown, which is exactly what unknown is for.
+   */
+  ipcMain.handle("engine-gates", async (_e, mints: unknown, detail: unknown) => {
+    const list = Array.isArray(mints)
+      ? mints.filter((m): m is string => typeof m === "string").slice(0, 50)
+      : []
+    if (list.length === 0) return {}
+    try {
+      const res = await fetch(`${ENGINE}/api/gates`, {
+        method: "POST",
+        headers: engineHeaders(),
+        body: JSON.stringify({ mints: list, detail: typeof detail === "string" ? detail : undefined }),
+      })
+      if (!res.ok) return {}
+      const body = (await res.json()) as { gates?: Record<string, { snapshot?: unknown }> }
+      const out: Record<string, unknown> = {}
+      for (const [mint, v] of Object.entries(body.gates ?? {})) {
+        if (v?.snapshot) out[mint] = v.snapshot
+      }
+      return out
+    } catch {
+      return {}
+    }
+  })
+
   ipcMain.handle("candles", async (_e, pool: unknown) => {
     if (typeof pool !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(pool)) return []
     try {

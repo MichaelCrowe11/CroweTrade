@@ -1444,6 +1444,89 @@ export class Ledger extends DurableObject<Env> {
    * safe, which is the difference between this and every "safe: true" boolean
    * an aggregator will sell you.
    */
+  /**
+   * Gates for many mints at once, for the terminal's scan list.
+   *
+   * Exists because the terminal was BLINDER THAN THE ENGINE. It recomputed
+   * gates locally from the DexScreener bootstrap feed against the public RPC,
+   * so LP lock, holder spread and deployer history read "unknown" on screen
+   * while the engine could answer all three: it holds the Helius key, the
+   * creators table, and the labeled corpus that turns a deployer into a rug
+   * history. The screen was reporting less than the system knew, which also
+   * made the audit's point that terminal and engine could disagree.
+   *
+   * Cost shape drives the signature. Mint authorities batch into ONE
+   * getMultipleAccounts for the whole list, and deployer history is pure SQL
+   * over data we already own, so both are effectively free per extra mint.
+   * Top-holder share is one RPC PER MINT, so it is resolved only for the mint
+   * the operator actually has selected, passed as `detail`. Every other mint
+   * reports holder spread as unknown, which is not a shortcut: we genuinely
+   * did not measure it, and saying so is the whole three-state discipline.
+   */
+  async gatesFor(mints: string[], detail?: string): Promise<unknown> {
+    configureRpc(this.env.HELIUS_API_KEY)
+    const signal = AbortSignal.timeout(8_000)
+    const wanted = [...new Set(mints)].slice(0, 50)
+    if (wanted.length === 0) return { gates: {} }
+
+    const facts = await fetchMintFacts(wanted, signal).catch(() => new Map<string, MintFacts>())
+
+    let detailShare: number | undefined
+    if (detail && wanted.includes(detail)) {
+      const f = facts.get(detail)
+      if (f) detailShare = await fetchTopHolderShare(detail, f.supply, signal).catch(() => undefined)
+    }
+
+    // Deployer history for the whole batch in one pass. A creator with no
+    // prior LABELED mints stays undefined rather than becoming a flattering
+    // "0 rugs" -- no history is not a clean history.
+    const history = new Map<string, { prior: number; rugs: number }>()
+    for (const row of this.sql().exec<{ mint: string; prior: number; rugs: number }>(
+      `SELECT cr.mint AS mint,
+              (SELECT COUNT(*) FROM creators c2 JOIN decisions d2 ON d2.mint = c2.mint
+                WHERE c2.creator = cr.creator AND c2.mint != cr.mint AND d2.labeled = 1) AS prior,
+              (SELECT COUNT(*) FROM creators c3 JOIN decisions d3 ON d3.mint = c3.mint
+                WHERE c3.creator = cr.creator AND c3.mint != cr.mint AND d3.labeled = 1 AND d3.died = 1) AS rugs
+         FROM creators cr WHERE cr.mint IN (${wanted.map(() => "?").join(",")})`,
+      ...wanted,
+    ).toArray()) {
+      if (row.prior > 0) history.set(row.mint, { prior: row.prior, rugs: row.rugs })
+    }
+
+    // Returns snapshot FIELDS, not evaluated gates, on purpose. The terminal
+    // keeps running the same shared/gates.ts this engine runs, so the two can
+    // only ever differ by their inputs -- and this call is precisely about
+    // giving the terminal the engine's inputs. Shipping a verdict instead
+    // would create a second place where "what the gates mean" is decided.
+    // The verdict below is a convenience for non-terminal callers; the
+    // terminal ignores it and evaluates for itself.
+    const out: Record<string, unknown> = {}
+    for (const mint of wanted) {
+      const f = facts.get(mint)
+      const h = history.get(mint)
+      const snapshot = {
+        mintAuthority: f?.mintAuthority,
+        freezeAuthority: f?.freezeAuthority,
+        topHolderShare: mint === detail ? detailShare : undefined,
+        deployerPriorMints: h?.prior,
+        deployerPriorRugs: h?.rugs,
+      }
+      out[mint] = {
+        snapshot,
+        verdict: combineVerdict(evaluateGates({
+          mint, asOf: Date.now(), launchedAt: null,
+          lpLockedBps: undefined, solReserveLamports: undefined, ...snapshot,
+        })),
+      }
+    }
+    return {
+      gates: out,
+      resolvedAuthorities: facts.size,
+      holderCheckedFor: detailShare === undefined ? null : detail,
+      note: "unknown means unmeasured, never safe. Holder spread is resolved only for the selected mint; one RPC per mint is too expensive for a whole scan list.",
+    }
+  }
+
   async safetyFor(mint: string): Promise<unknown> {
     configureRpc(this.env.HELIUS_API_KEY)
     const signal = new AbortController().signal

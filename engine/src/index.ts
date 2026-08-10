@@ -177,6 +177,22 @@ export default {
       // this adds no new secret to the client. It does mean the admin token
       // unlocks inference spend -- acceptable, because that same token already
       // unlocks kill, veto and tick, so the blast radius does not grow.
+      // Gates for the terminal's scan list, computed on the engine's better
+      // data (Helius authorities, the creators table, the labeled corpus)
+      // instead of recomputed in the app against a weaker feed.
+      if (url.pathname === "/api/gates" && req.method === "POST") {
+        if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
+        const body = (await req.json().catch(() => null)) as {
+          mints?: unknown; detail?: unknown
+        } | null
+        const mints = Array.isArray(body?.mints)
+          ? body.mints.filter((m): m is string => typeof m === "string")
+          : []
+        if (mints.length === 0) return json({ error: "mints required" }, 400)
+        const detail = typeof body?.detail === "string" ? body.detail : undefined
+        return json(await ledger(env).gatesFor(mints, detail))
+      }
+
       if (url.pathname === "/api/llm" && req.method === "POST") {
         if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
         const body = (await req.json().catch(() => null)) as {

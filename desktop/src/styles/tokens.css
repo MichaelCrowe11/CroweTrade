@@ -122,7 +122,10 @@
   /* Annunciator states. Gold means the gate is satisfied. */
   --clm-lamp-pass: var(--clm-gold);
   --clm-lamp-fail: #d4574e;
-  --clm-lamp-unknown: rgba(154, 154, 162, 0.28);
+  /* Raised from 0.28 to 0.55: at 28% the unknown ring was so faint it read as
+   * absent rather than as a state. Unknown is a FINDING here (we looked and
+   * could not measure), so it has to be legible enough to notice. */
+  --clm-lamp-unknown: rgba(154, 154, 162, 0.55);
 
   /* Terminal surface, mirrored by name from the desktop renderer's
    * --term-bg / --term-fg. The terminal is the one surface darker than the

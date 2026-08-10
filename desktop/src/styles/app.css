@@ -148,10 +148,13 @@ body {
   display: grid;
   grid-template-columns: 1fr auto auto;
   grid-template-rows: auto auto;
-  gap: 3px 10px;
+  gap: 1px 10px;
   align-items: center;
   width: 100%;
-  padding: 11px 16px;
+  /* 11px -> 7px vertical. The scan list is a TAPE: its job is to show as much
+   * of the market as the panel can hold, and generous row padding was buying
+   * whitespace with information. */
+  padding: 7px 14px;
   border: 0;
   border-bottom: 1px solid var(--clm-line);
   border-left: 2px solid transparent;
@@ -173,12 +176,17 @@ body {
 }
 
 .scan__symbol { grid-column: 1; grid-row: 1; font-weight: 550; letter-spacing: 0.01em; }
-.scan__age { grid-column: 1; grid-row: 2; font-size: 11px; color: var(--clm-muted); }
+.scan__age { grid-column: 1; grid-row: 2; font-size: 10.5px; color: var(--clm-muted); }
 
 .scan__change {
   grid-column: 2;
   grid-row: 1;
-  font-size: 11px;
+  /* Up from 11px and set in tabular mono: this is the figure the eye hunts
+   * for down the column, and proportional digits made the column ragged. */
+  font-size: 12.5px;
+  font-family: var(--clm-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 550;
   align-self: center;
 }
 
@@ -222,15 +230,18 @@ body {
 .scan__flag--clear { background: var(--clm-lamp-pass); }
 .scan__flag--caution { background: var(--clm-gold-deep); }
 .scan__flag--blocked { background: var(--clm-lamp-fail); }
-.scan__flag--insufficient-data { background: var(--clm-lamp-unknown); }
+.scan__flag--insufficient-data {
+  background: transparent;
+  border: 1.5px solid var(--clm-lamp-unknown);
+}
 
 /* ── Primary readout ────────────────────────────────────────────────────── */
 
 .primary {
   display: flex;
   flex-direction: column;
-  gap: 28px;
-  padding: 40px 44px;
+  gap: 20px;
+  padding: 24px 26px;
 }
 
 .primary__identity {
@@ -240,8 +251,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: -40px -44px 0;
-  padding: 28px 44px 16px;
+  margin: -24px -26px 0;
+  padding: 18px 26px 12px;
   background: linear-gradient(var(--clm-panel) 78%, transparent);
 }
 
@@ -348,9 +359,10 @@ body {
  * it, and the whole purpose of this readout is to not be negotiated with. */
 .verdict {
   display: flex;
-  align-items: baseline;
-  gap: 16px;
-  padding: 22px 26px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 16px 20px;
   border: 1px solid var(--clm-line);
   /* Lit bevel: the top edge catches light, which is what makes a surface read
    * as raised rather than merely outlined. */
@@ -363,13 +375,14 @@ body {
 
 .verdict__word {
   font-family: var(--clm-font-mono);
-  font-size: 28px;
+  font-size: 26px;
+  line-height: 1.1;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
-.verdict__note { color: var(--clm-muted); font-size: 12px; }
+.verdict__note { color: var(--clm-muted); font-size: 12px; line-height: 1.35; }
 
 .verdict--clear { border-left-color: var(--clm-lamp-pass); }
 .verdict--clear .verdict__word { color: var(--clm-lamp-pass); }
@@ -399,43 +412,60 @@ body {
 .lamp {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 3px 11px;
+  gap: 2px 11px;
   align-items: center;
-  padding: 15px 16px;
+  padding: 11px 16px;
   background: var(--clm-raised);
 }
 
+/* UNKNOWN IS A HOLLOW RING, NOT A DIM DOT.
+ *
+ * This is a semantics fix, not a taste one. A low-opacity filled dot is how
+ * every interface on earth draws DISABLED, so a panel of them reads as
+ * "these gates are switched off" — which is how it was actually read in use.
+ * The three states have to be distinguishable by SHAPE, because that is the
+ * one channel that survives peripheral vision, colour blindness and a dimmed
+ * screen: filled and glowing = measured pass, filled solid = measured fail,
+ * hollow = an instrument awaiting a reading. An empty socket is obviously
+ * empty in a way a dim bulb is not. */
 .lamp__led {
   grid-row: 1 / span 2;
   width: 9px;
   height: 9px;
   border-radius: 999px;
-  background: var(--clm-lamp-unknown);
+  background: transparent;
+  border: 1.5px solid var(--clm-lamp-unknown);
 }
 
 /* Only a lit lamp glows, and only faintly. A panel where everything glows is
  * decoration; a panel where one thing glows is information. */
 .lamp--pass .lamp__led {
   background: var(--clm-lamp-pass);
+  border-color: var(--clm-lamp-pass);
   box-shadow: 0 0 0 3px var(--clm-focus-halo), 0 0 14px 2px var(--clm-accent-wash);
 }
 
 .lamp--fail .lamp__led {
   background: var(--clm-lamp-fail);
+  border-color: var(--clm-lamp-fail);
   box-shadow: 0 0 0 3px rgba(212, 87, 78, 0.22);
 }
 
 .lamp__label {
   font-family: var(--clm-font-mono);
-  font-size: 10px;
-  letter-spacing: 0.16em;
+  font-size: 11px;
+  letter-spacing: 0.14em;
   color: var(--clm-muted);
 }
 
 .lamp--pass .lamp__label { color: var(--clm-ink); }
 .lamp--fail .lamp__label { color: var(--clm-lamp-fail); }
 
-.lamp__detail { font-size: 11px; color: var(--clm-muted); }
+/* The detail line is the reading itself ("top holder 3.7%", "31 prior, 0
+ * rugged"). It was 11px muted, which made the actual measurement the
+ * quietest thing in the panel while the static label shouted. Inverted. */
+.lamp__detail { font-size: 12.5px; color: var(--clm-ink); }
+.lamp--unknown .lamp__detail { color: var(--clm-muted); font-style: italic; }
 
 /* A critical gate that failed gets a hairline top edge in the fail hue. The
  * severity distinction has to be visible without reading, because the two
