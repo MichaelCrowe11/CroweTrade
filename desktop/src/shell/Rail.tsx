@@ -114,7 +114,37 @@ const ORDER: RailKey[] = [
 /** The two side surfaces share the dock; their buttons toggle, panels open. */
 const DOCK: ReadonlySet<RailKey> = new Set<RailKey>(["analyst", "orchestrator"])
 
-export function Rail() {
+/** Sun and moon, drawn not imported: the rail's other icons are hand-drawn
+ *  SVG with one gold accent each, and a stock icon font would read as
+ *  borrowed. */
+function ThemeIcon({ theme }: { theme: "dark" | "light" }) {
+  return (
+    <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+      {theme === "dark" ? (
+        <path
+          d="M20 14.5A8.2 8.2 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+        />
+      ) : (
+        <g fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+          <circle cx="12" cy="12" r="4.2" />
+          <path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6" />
+        </g>
+      )}
+    </svg>
+  )
+}
+
+export function Rail({
+  theme,
+  onToggleTheme,
+}: {
+  theme: "dark" | "light"
+  onToggleTheme: () => void
+}) {
   const panels = usePanels((s) => s.panels)
   const analystOpen = usePanels((s) => s.analystOpen)
   const orchestratorOpen = usePanels((s) => s.orchestratorOpen)
@@ -167,6 +197,19 @@ export function Rail() {
           <span className="rail__label">{LABELS[key]}</span>
         </motion.button>
       ))}
+      {/* Pushed to the foot and visually quieter than the panel entries: this
+          switches how the terminal looks, not what it does, and it should not
+          compete with the surfaces that carry the work. */}
+      <button
+        type="button"
+        className="rail__item rail__item--foot"
+        onClick={onToggleTheme}
+        title={theme === "dark" ? "Switch to light" : "Switch to dark"}
+        aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+      >
+        <ThemeIcon theme={theme} />
+        <span className="rail__label">{theme === "dark" ? "LIGHT" : "DARK"}</span>
+      </button>
     </nav>
   )
 }

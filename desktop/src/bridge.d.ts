@@ -20,6 +20,8 @@ interface Window {
   crowetrade?: {
     platform?: string
     candles?: (pool: string) => Promise<number[][]>
+    /** Keeps the NATIVE window background in step with the CSS theme. */
+    setTheme?: (theme: string) => Promise<void>
     /** Gate snapshot fields from the engine, which resolves LP lock, holder
      *  spread and deployer history this app cannot see. Empty on failure. */
     engineGates?: (

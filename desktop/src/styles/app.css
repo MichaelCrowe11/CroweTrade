@@ -1556,3 +1556,16 @@ body {
   mask-image: linear-gradient(transparent, #000 34%);
   -webkit-mask-image: linear-gradient(transparent, #000 34%);
 }
+
+/* The theme switch sits at the foot of the rail, away from the panel entries.
+ * It changes how the terminal looks, not what it does, so it must not compete
+ * with the surfaces that carry the work. */
+.rail__item--foot {
+  margin-top: auto;
+  border: 0;
+  background: transparent;
+  color: var(--clm-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.rail__item--foot:hover { color: var(--clm-ink); }

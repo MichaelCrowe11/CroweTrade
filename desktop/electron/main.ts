@@ -401,6 +401,14 @@ void app.whenReady().then(() => {
     .fromPartition(BROWSER_PARTITION)
     .setPermissionRequestHandler((_wc, _permission, cb) => cb(false))
 
+  // The window's own background is painted by Electron, outside React, so the
+  // renderer has to tell this side when the theme changes or a light page sits
+  // inside a near-black frame (and flashes black on every launch).
+  ipcMain.handle("theme:set", (_e, theme: unknown) => {
+    if (theme !== "light" && theme !== "dark") return
+    win?.setBackgroundColor(theme === "light" ? "#f6f6f8" : "#0a0a0b")
+  })
+
   ipcMain.handle("browser:ensure", (_e, id: unknown, url: unknown) => {
     if (typeof id !== "string" || !BROWSER_PANEL_ID.test(id)) return false
     return ensureBrowserView(id, isHttpUrl(url) ? url : "https://solscan.io")
@@ -419,12 +427,32 @@ void app.whenReady().then(() => {
     ) {
       return
     }
-    view.setBounds({
-      x: Math.max(0, Math.round(x)),
-      y: Math.max(0, Math.round(y)),
-      width: Math.max(0, Math.round(width)),
-      height: Math.max(0, Math.round(height)),
-    })
+    // CLIP to the window, never CLAMP the origin.
+    //
+    // The previous form ran Math.max(0, y), which for a panel scrolled partly
+    // above the viewport moved the whole view to the top of the window at full
+    // height -- so the page rendered over unrelated panels instead of shrinking
+    // into its own. Reported as "the browser isn't mapping in correctly".
+    // Intersecting with the content rect is the correct operation: a panel half
+    // off the top loses its top half, exactly as a clipped DOM element would.
+    const content = win?.getContentBounds()
+    const winW = content?.width ?? Number.MAX_SAFE_INTEGER
+    const winH = content?.height ?? Number.MAX_SAFE_INTEGER
+    const left = Math.round(x)
+    const top = Math.round(y)
+    const right = left + Math.round(width)
+    const bottom = top + Math.round(height)
+    const cx = Math.max(0, left)
+    const cy = Math.max(0, top)
+    const cw = Math.min(right, winW) - cx
+    const ch = Math.min(bottom, winH) - cy
+    // A fully offscreen panel gets a zero rect rather than a stray sliver;
+    // Electron treats 0x0 as effectively hidden, which is what we want.
+    view.setBounds(
+      cw > 0 && ch > 0
+        ? { x: cx, y: cy, width: cw, height: ch }
+        : { x: 0, y: 0, width: 0, height: 0 },
+    )
   })
 
   ipcMain.handle("browser:navigate", (_e, id: unknown, url: unknown) => {

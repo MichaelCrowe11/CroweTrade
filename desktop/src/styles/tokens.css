@@ -139,3 +139,58 @@
   --clm-font-body: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
   --clm-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
+
+/* ── Light surface ────────────────────────────────────────────────────────
+ *
+ * The same ladder inverted, with values taken from the LIGHT half of
+ * crowelm.com/static/custom.css rather than derived here, so the two themes
+ * stay one design rather than two opinions. The dark set above remains the
+ * default: a trading surface is usually read in a dim room, and this exists
+ * for daylight and for screenshots that have to sit in a document.
+ *
+ * Only tokens are redefined. Nothing downstream knows which theme is live,
+ * which is the whole point of having named steps instead of literal colours.
+ *
+ * The direction and lamp hues are re-tuned rather than reused: #5fae74 and
+ * #d2ad62 carry on near-black but wash out to pastel on cream, and a gate
+ * lamp that cannot be seen is worse than no lamp. */
+:root[data-theme="light"] {
+  --clm-cream: #f6f6f8;
+  --clm-panel: #fafafc;
+  --clm-raised: #ffffff;
+  --clm-ink: #17171a;
+  --clm-muted: #63636c;
+
+  --clm-gold: #b8893a;
+  --clm-gold-soft: #c9a227;
+  --clm-gold-deep: #8c682c;
+  --clm-blue: #2e5aad;
+
+  --clm-line: rgba(23, 23, 26, 0.11);
+  --clm-line-strong: rgba(23, 23, 26, 0.22);
+  --clm-hair-top: rgba(255, 255, 255, 0.65);
+
+  --clm-z1: 0 1px 2px rgba(26, 23, 20, 0.05);
+  --clm-z2: 0 1px 2px rgba(26, 23, 20, 0.05), 0 10px 28px -14px rgba(26, 23, 20, 0.18);
+  --clm-z3: 0 2px 4px rgba(26, 23, 20, 0.06), 0 22px 56px -20px rgba(26, 23, 20, 0.26);
+
+  --clm-accent-wash: rgba(184, 137, 58, 0.12);
+  --clm-focus-halo: rgba(184, 137, 58, 0.16);
+
+  /* Deepened for contrast against cream. */
+  --clm-up: #2f7d4a;
+  --clm-up-soft: #3f9159;
+  --clm-down: #b23b33;
+  --clm-down-soft: rgba(178, 59, 51, 0.8);
+
+  --clm-lamp-pass: var(--clm-gold-deep);
+  --clm-lamp-fail: #b23b33;
+  --clm-lamp-unknown: rgba(23, 23, 26, 0.34);
+  --clm-lamp-unknown-text: rgba(23, 23, 26, 0.55);
+
+  /* The terminal stays the darkest surface in EITHER theme: machine output
+   * sinks into the machine layer, and a light terminal pane would read as a
+   * text editor rather than a console. */
+  --clm-term-bg: #14141a;
+  --clm-term-fg: #e9e9ec;
+}

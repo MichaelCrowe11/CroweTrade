@@ -10,6 +10,7 @@ import { Spark } from "./components/Spark.js"
 import { Rail } from "./shell/Rail.js"
 import { Workspace, CloseIcon } from "./shell/Workspace.js"
 import { AnalystPanel } from "./shell/AnalystPanel.js"
+import { parseTheme, nextTheme, applyTheme, THEME_KEY, type Theme } from "./shell/theme.js"
 import { BrowserPanel } from "./shell/BrowserPanel.js"
 import { Orchestrator } from "./shell/Orchestrator.js"
 import { WorkflowsPanel } from "./shell/WorkflowsPanel.js"
@@ -149,6 +150,22 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [now, setNow] = useState(() => Date.now())
   const [engine, setEngine] = useState<EngineSummary | null>(null)
+  const [theme, setTheme] = useState<Theme>(() =>
+    parseTheme(typeof localStorage === "undefined" ? null : localStorage.getItem(THEME_KEY)),
+  )
+
+  // Applied to the document root, not to a wrapper: the native window
+  // background is painted by Electron and a themed div would leave a
+  // near-black frame around a light page.
+  useEffect(() => {
+    applyTheme(document.documentElement, theme)
+    try {
+      localStorage.setItem(THEME_KEY, theme)
+    } catch {
+      // Private mode or a wiped profile; the theme simply will not persist.
+    }
+    void window.crowetrade?.setTheme?.(theme)
+  }, [theme])
   // Rolling price trace per mint, built from successive scans. The engine keeps
   // its own tick history, but the terminal polls on its own schedule and this
   // costs no extra request.
@@ -772,7 +789,7 @@ export default function App() {
 
 
       <div className="body">
-        <Rail />
+        <Rail theme={theme} onToggleTheme={() => setTheme((t) => nextTheme(t))} />
         {/* The side surfaces pop out from the left edge beside the rail,
             Cortex's pattern: the rail switches the surface, one at a time,
             and switching collapses the other. They DOCK rather than overlay:
