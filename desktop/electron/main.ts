@@ -1,8 +1,8 @@
 import { app, BrowserWindow, WebContentsView, ipcMain, session, shell } from "electron"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { azToken } from "./token"
-import { createSseParser } from "./sse"
+
+import { ENGINE, engineHeaders, streamCompletion } from "./engine"
 import { runOrchestrator, stopOrchestrator } from "./orchestrator"
 import { listWorkflows, deleteWorkflow, runWorkflow } from "./workflows"
 
@@ -14,118 +14,43 @@ import { listWorkflows, deleteWorkflow, runWorkflow } from "./workflows"
  * A 30s per-pool cache keeps us inside the public rate limit when the operator
  * flips between tokens quickly.
  */
-const FOUNDRY =
-  "https://crowelm-prod-eastus2.services.ai.azure.com/api/projects/crowelm-foundry"
-const ANALYST_MODEL = "gpt-5.6-sol"
-
 /**
  * Ask the CroweTrade Analyst.
  *
- * Lives in the main process because it needs an Azure token, and a credential
- * reachable from page context is a credential you have published. The renderer
- * gets an answer, never a key.
+ * The Analyst's LOOP now lives in the engine Worker (POST /api/analyst), not
+ * here. That move happened on 2026-08-09 when Azure revoked the Foundry
+ * credits, and it improved the design rather than merely relocating it: the
+ * Analyst's tools are engine reads, so running the loop beside the ledger
+ * turns three HTTP round trips into three method calls, and the read-only
+ * boundary stops being a spec filter this file had to apply correctly on
+ * every request. The only tools that exist over there are reads.
  *
- * The token comes from `az account get-access-token`, so the operator's own
- * Azure login is the auth: no key is stored in the app at all.
- */
-/**
- * Streaming: the response arrives as SSE and every text delta is forwarded to
- * the renderer the moment it lands, so the Analyst speaks the way Cortex's
- * conversation surface does instead of holding its breath for the whole
- * answer. Tool invocations stream too (response.output_item.added), which is
- * grounding made visible in real time: the operator watches the Analyst read
- * the engine before it speaks. Event vocabulary verified against the live
- * endpoint: output_text.delta carries text; output_item.added carries
- * openapi_call items; completed closes the stream.
+ * This function is now transport: post the question, forward text deltas to
+ * the renderer as they land, and surface which reads the engine performed.
+ * It carries no model credential and no instructions file.
  */
 async function askAnalyst(
   question: string,
   onDelta: (text: string) => void,
   onTool: (name: string) => void,
 ): Promise<{ text: string; consulted: string[] }> {
-  const token = await azToken()
-
-  // The analyst's instructions and OpenAPI spec live at the repo root in
-  // dev; packaged builds carry them as extraResources beside the asar.
-  // Second member of the nb_runner packaging bug class: anything a spawn or
-  // readFileSync touches must be an extraResource, and this one hid outside
-  // desktop/ where the packaging sweep did not look.
-  const root = app.isPackaged
-    ? path.join(process.resourcesPath, "analyst")
-    : path.join(__dirname, "../../analyst")
-
-  // The Analyst's tool surface is the anonymous READ subset, enforced HERE
-  // rather than trusted from the spec file. The engine's spec also documents
-  // authenticated operations now (POST /api/research answered 401 to the
-  // anonymous Analyst and failed whole answers, observed live); the read-only
-  // boundary is this surface's security design, so non-GET operations never
-  // reach the model at all.
-  const spec = JSON.parse(
-    fs.readFileSync(path.join(root, "config/engine-openapi.json"), "utf8"),
-  ) as { paths?: Record<string, Record<string, unknown>> }
-  if (spec.paths) {
-    for (const [p, methods] of Object.entries(spec.paths)) {
-      for (const m of Object.keys(methods)) {
-        if (m.toLowerCase() !== "get") delete methods[m]
-      }
-      if (Object.keys(methods).length === 0) delete spec.paths[p]
-    }
-  }
-  const res = await fetch(`${FOUNDRY}/openai/v1/responses`, {
+  const res = await fetch(`${ENGINE}/api/analyst`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: ANALYST_MODEL,
-      instructions: fs.readFileSync(path.join(root, "agent/instructions.md"), "utf8"),
-      tools: [{
-        type: "openapi",
-        openapi: {
-          name: "crowetrade_engine_read",
-          description: "Read-only access to the live CroweTrade engine.",
-          auth: { type: "anonymous" },
-          spec,
-        },
-      }],
-      input: question,
-      stream: true,
-    }),
+    headers: engineHeaders(),
+    body: JSON.stringify({ question }),
   })
-  if (!res.ok || !res.body) {
-    throw new Error(`analyst ${res.status}: ${(await res.text()).slice(0, 160)}`)
-  }
-
-  const parser = createSseParser()
-  const decoder = new TextDecoder()
   const consulted: string[] = []
-  let text = ""
-  let failure: string | null = null
-
-  for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-    for (const evt of parser.push(decoder.decode(chunk, { stream: true }))) {
-      if (evt.type === "response.output_text.delta") {
-        const delta = evt["delta"]
-        if (typeof delta === "string") {
-          text += delta
-          onDelta(delta)
-        }
-      } else if (evt.type === "response.output_item.added") {
-        const item = evt["item"] as { type?: string; name?: string } | undefined
-        if (item && item.type !== "message" && item.type !== "reasoning") {
-          const name = item.name ?? item.type ?? "tool"
-          consulted.push(name)
-          onTool(name)
-        }
-      } else if (evt.type === "response.failed" || evt.type === "error") {
-        // Name the actual failure; a truncated raw event hides the reason
-        // right where it matters (learned from a live tool_user_error).
-        const resp = evt["response"] as { error?: { message?: string } } | undefined
-        const top = evt["error"] as { message?: string } | undefined
-        failure = (resp?.error?.message ?? top?.message ?? JSON.stringify(evt)).slice(0, 300)
-      }
-    }
+  const { text } = await streamCompletion(res, {
+    onText: onDelta,
+    // Reasoning is deliberately dropped rather than shown: GLM-5.2 emits its
+    // working-out as reasoning_content, and the transcript is for answers.
+  })
+  // The engine reports the reads it ran in a trailing header rather than
+  // inline, so grounding stays visible without polluting the text stream.
+  for (const name of (res.headers.get("X-Analyst-Tools") ?? "").split(",").filter(Boolean)) {
+    consulted.push(name)
+    onTool(name)
   }
-
-  if (failure) throw new Error(`analyst stream failed: ${failure}`)
   return { text, consulted }
 }
 

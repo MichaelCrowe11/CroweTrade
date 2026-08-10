@@ -1,5 +1,4 @@
-import { createSseParser } from "./sse"
-import { azToken } from "./token"
+import { llm, streamCompletion } from "./engine"
 import { runCommand, runPython, stopExec, type Emit as ExecEmit } from "./exec"
 import { saveWorkflow, listWorkflows, runWorkflow } from "./workflows"
 import { saveNotebook, listNotebooks, runNotebook } from "./notebook"
@@ -7,23 +6,21 @@ import { saveNotebook, listNotebooks, runNotebook } from "./notebook"
 /**
  * The Orchestrator: an agent harness that runs the terminal, visibly.
  *
- * It holds the same credential rail as the Analyst (the operator's own az
- * login; nothing stored) but a different contract: where the Analyst is
- * read-only by construction, the Orchestrator ACTS. It runs shell commands on
- * this machine and rearranges the workspace. The safety model is visibility
+ * It reaches its model through the engine's inference passthrough, exactly as
+ * the Analyst does, so this app holds no model credential. Its CONTRACT is the
+ * opposite though: where the Analyst is read-only by construction, the
+ * Orchestrator ACTS. It runs shell commands on this machine and rearranges
+ * the workspace. The safety model is visibility
  * plus a hand on the cord: every command it runs is echoed to the terminal
  * pane BEFORE it executes, all output streams live, and stop() kills the
  * loop and whatever child process is running. sudo is refused outright.
  *
- * Tool results flow back through the responses API's function-call protocol:
- * stream a round, collect completed function_call items, execute them in
- * order, submit function_call_output items against previous_response_id,
- * repeat until the model answers in prose or the round budget runs out.
+ * Tool results flow back through the chat-completions function-call protocol:
+ * stream a round, assemble tool_calls from their streamed fragments, execute
+ * them in order, append each result as a tool message, repeat until the model
+ * answers in prose or the round budget runs out.
  */
 
-const FOUNDRY =
-  "https://crowelm-prod-eastus2.services.ai.azure.com/api/projects/crowelm-foundry"
-const MODEL = "gpt-5.6-sol"
 const MAX_ROUNDS = 12
 const COMMAND_TIMEOUT_MS = 120_000
 const PANEL_TYPES = ["scan", "chart", "gates", "book", "calibration", "browser"] as const
@@ -234,83 +231,72 @@ interface FnCall {
   arguments: string
 }
 
-/** One streamed round. Returns the response id, its text, and any tool calls. */
+/**
+ * One streamed round through the engine's inference passthrough.
+ *
+ * The protocol changed with the move off Azure: the Responses API carried
+ * conversation state server-side via previous_response_id, and chat
+ * completions does not. So the loop below now owns the full message history
+ * and resends it each round. That is more bytes on the wire and strictly
+ * simpler to reason about, because the exact context the model sees lives in
+ * one array this file controls rather than in a remote session.
+ */
 async function streamRound(
-  token: string,
-  input: unknown,
-  previousId: string | null,
+  messages: unknown[],
   emit: Emit,
-): Promise<{ id: string; text: string; calls: FnCall[] }> {
-  const res = await fetch(`${FOUNDRY}/openai/v1/responses`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: MODEL,
-      instructions: INSTRUCTIONS,
-      tools: TOOLS,
-      input,
-      stream: true,
-      ...(previousId ? { previous_response_id: previousId } : {}),
-    }),
+): Promise<{ text: string; calls: FnCall[] }> {
+  // The two APIs nest the tool schema differently: Responses put name and
+  // parameters at the top level, chat completions wraps them in `function`.
+  // Converting here keeps TOOLS above readable as one flat declaration.
+  const tools = TOOLS.map((t) => ({
+    type: "function" as const,
+    function: { name: t.name, description: t.description, parameters: t.parameters },
+  }))
+  const res = await llm({ messages, tools, stream: true })
+  const { text, toolCalls } = await streamCompletion(res, {
+    onText: (t) => emit({ kind: "assistant_delta", text: t }),
+    // Reasoning stays out of the transcript; the operator wants the plan and
+    // the commands, not the model's working-out.
   })
-  if (!res.ok || !res.body) {
-    throw new Error(`orchestrator ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return {
+    text,
+    calls: toolCalls.map((c, i) => ({
+      call_id: c.id ?? `call_${i}`,
+      name: c.name,
+      arguments: c.args || "{}",
+    })),
   }
-
-  const parser = createSseParser()
-  const decoder = new TextDecoder()
-  let id = ""
-  let text = ""
-  const calls: FnCall[] = []
-
-  for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-    for (const evt of parser.push(decoder.decode(chunk, { stream: true }))) {
-      if (evt.type === "response.output_text.delta") {
-        const d = evt["delta"]
-        if (typeof d === "string") {
-          text += d
-          emit({ kind: "assistant_delta", text: d })
-        }
-      } else if (evt.type === "response.output_item.done") {
-        const item = evt["item"] as
-          | { type?: string; call_id?: string; name?: string; arguments?: string }
-          | undefined
-        if (item?.type === "function_call" && item.call_id && item.name) {
-          calls.push({ call_id: item.call_id, name: item.name, arguments: item.arguments ?? "{}" })
-        }
-      } else if (evt.type === "response.completed") {
-        const r = evt["response"] as { id?: string } | undefined
-        if (r?.id) id = r.id
-      } else if (evt.type === "response.failed" || evt.type === "error") {
-        const resp = evt["response"] as { error?: { message?: string } } | undefined
-        const top = evt["error"] as { message?: string } | undefined
-        const msg = resp?.error?.message ?? top?.message ?? JSON.stringify(evt)
-        throw new Error(`stream failed: ${msg.slice(0, 300)}`)
-      }
-    }
-  }
-  return { id, text, calls }
 }
 
 export async function runOrchestrator(goal: string, emit: Emit): Promise<{ text: string }> {
   stopped = false
-  const token = await azToken()
 
-  let input: unknown = goal
-  let previousId: string | null = null
+  const messages: unknown[] = [
+    { role: "system", content: INSTRUCTIONS },
+    { role: "user", content: goal },
+  ]
   let lastText = ""
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
     if (stopped) return { text: lastText || "stopped" }
     emit({ kind: "round", n: round + 1 })
-    const { id, text, calls } = await streamRound(token, input, previousId, emit)
+    const { text, calls } = await streamRound(messages, emit)
     if (text) lastText = text
     if (calls.length === 0 || stopped) {
       emit({ kind: "done" })
       return { text: lastText }
     }
 
-    const outputs: { type: "function_call_output"; call_id: string; output: string }[] = []
+    messages.push({
+      role: "assistant",
+      content: text,
+      tool_calls: calls.map((c) => ({
+        id: c.call_id,
+        type: "function",
+        function: { name: c.name, arguments: c.arguments },
+      })),
+    })
+
     for (const call of calls) {
       if (stopped) break
       let args: Record<string, unknown> = {}
@@ -365,11 +351,8 @@ export async function runOrchestrator(goal: string, emit: Emit): Promise<{ text:
       } else {
         result = `unknown tool ${call.name}`
       }
-      outputs.push({ type: "function_call_output", call_id: call.call_id, output: result })
+      messages.push({ role: "tool", tool_call_id: call.call_id, content: result })
     }
-
-    input = outputs
-    previousId = id
   }
 
   emit({ kind: "done" })

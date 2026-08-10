@@ -221,12 +221,12 @@ export async function analystStream(
   ai: Ai,
   question: string,
   deps: AnalystDeps,
-  onTool?: (name: string) => void,
-): Promise<ReadableStream> {
+): Promise<{ stream: ReadableStream; consulted: string[] }> {
   const messages: unknown[] = [
     { role: "system", content: SYSTEM_PROMPT },
     { role: "user", content: question },
   ]
+  const consulted: string[] = []
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const res = (await callModel(ai, messages, false)) as {
@@ -242,7 +242,7 @@ export async function analystStream(
 
     messages.push({ role: "assistant", content: "", tool_calls: calls })
     for (const c of calls) {
-      onTool?.(c.function.name)
+      consulted.push(c.function.name)
       messages.push({
         role: "tool",
         tool_call_id: c.id ?? c.function.name,
@@ -251,5 +251,8 @@ export async function analystStream(
     }
   }
 
-  return (await callModel(ai, messages, true)) as ReadableStream
+  // Tool rounds finish BEFORE the answer streams, which is what lets the
+  // caller advertise the reads in a response header: by the time the body
+  // starts flowing, the list is already final.
+  return { stream: (await callModel(ai, messages, true)) as ReadableStream, consulted }
 }

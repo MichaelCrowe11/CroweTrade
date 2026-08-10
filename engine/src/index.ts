@@ -10,7 +10,7 @@
  */
 
 import { Ledger } from "./ledger.js"
-import { analystStream } from "./analyst.js"
+import { analystStream, ANALYST_MODEL } from "./analyst.js"
 import { priceFor, paymentRequired, settle, ROUTES, SOLANA_MAINNET } from "./x402.js"
 
 export { Ledger }
@@ -147,14 +147,55 @@ export default {
         const question = (body.question ?? "").trim()
         if (!question) return json({ error: "question required" }, 400)
         const stub = ledger(env)
-        const stream = await analystStream(env.AI, question, {
+        const { stream, consulted } = await analystStream(env.AI, question, {
           state: () => stub.summary(),
           exitSweep: () => stub.exitSweep(),
           modelFit: () => stub.trainModel(),
         })
         return new Response(stream, {
-          headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", ...CORS },
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            // Grounding, visible to the client without polluting the text
+            // stream. Final before the body flows: tool rounds run first.
+            "X-Analyst-Tools": consulted.join(","),
+            ...CORS,
+            "Access-Control-Expose-Headers": "X-Analyst-Tools",
+          },
         })
+      }
+
+      // Inference passthrough for the ORCHESTRATOR.
+      //
+      // The Analyst's loop runs server-side above because its tools are engine
+      // reads. The Orchestrator's cannot: its tools are the operator's shell,
+      // panels and notebooks, which exist only on the operator's machine. So it
+      // keeps a client-side loop and borrows the model through here.
+      //
+      // The point of the hop is that no Cloudflare credential ships inside a
+      // distributed desktop binary. The app already holds the admin token, so
+      // this adds no new secret to the client. It does mean the admin token
+      // unlocks inference spend -- acceptable, because that same token already
+      // unlocks kill, veto and tick, so the blast radius does not grow.
+      if (url.pathname === "/api/llm" && req.method === "POST") {
+        if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
+        const body = (await req.json().catch(() => null)) as {
+          messages?: unknown[]; tools?: unknown[]; stream?: boolean; max_tokens?: number
+        } | null
+        if (!body?.messages?.length) return json({ error: "messages required" }, 400)
+        const out = await env.AI.run(ANALYST_MODEL as keyof AiModels, {
+          messages: body.messages,
+          ...(body.tools ? { tools: body.tools } : {}),
+          stream: body.stream !== false,
+          // Reasoning tokens bill against this before any answer appears; see
+          // the empty-answer note in analyst.ts.
+          max_tokens: body.max_tokens ?? 8000,
+        } as never)
+        return body.stream === false
+          ? json(out)
+          : new Response(out as ReadableStream, {
+              headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", ...CORS },
+            })
       }
 
       if (url.pathname === "/api/research" && req.method === "POST") {

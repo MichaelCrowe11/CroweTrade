@@ -1,7 +1,7 @@
 {
   "name": "crowetrade-terminal",
   "productName": "CroweTrade",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "CroweTrade operator terminal",
   "main": "dist-electron/main.js",
@@ -45,14 +45,6 @@
       {
         "from": "scripts/nb_runner.py",
         "to": "scripts/nb_runner.py"
-      },
-      {
-        "from": "../analyst",
-        "to": "analyst",
-        "filter": [
-          "agent/**",
-          "config/**"
-        ]
       }
     ],
     "mac": {
