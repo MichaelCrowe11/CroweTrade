@@ -193,9 +193,41 @@ export interface AnalystDeps {
   modelFit(): Promise<unknown>
 }
 
+/**
+ * Shrink the engine summary to what an analyst actually reasons over.
+ *
+ * The full payload is ~38,500 characters and 30,000 of those are the raw
+ * `closed` trade array — which `cohorts` and `stats` already aggregate. It was
+ * being resent on every tool round, so a three-round answer carried ~29k
+ * tokens of mostly redundant JSON and took over a minute to produce.
+ *
+ * This is the same failure this project just diagnosed in its Azure bill:
+ * ~39,000 input tokens per request against a few hundred out. The fix is
+ * context discipline at the source, not a bigger budget. Recent trades stay
+ * because "what just happened" is a real question; the long tail goes because
+ * the aggregates answer everything else, and /api/research exists for the rest.
+ */
+const RECENT_TRADES = 12
+const RECENT_EVENTS = 25
+
+function trimState(s: unknown): unknown {
+  if (typeof s !== "object" || s === null) return s
+  const d = { ...(s as Record<string, unknown>) }
+  const closed = d["closed"]
+  if (Array.isArray(closed)) {
+    d["closed"] = closed.slice(0, RECENT_TRADES)
+    d["closedNote"] =
+      `showing ${Math.min(RECENT_TRADES, closed.length)} most recent of ${closed.length}; ` +
+      `cohorts and stats aggregate all of them`
+  }
+  const events = d["events"]
+  if (Array.isArray(events)) d["events"] = events.slice(0, RECENT_EVENTS)
+  return d
+}
+
 export async function runTool(name: string, deps: AnalystDeps): Promise<string> {
   const value =
-    name === "engine_state" ? await deps.state()
+    name === "engine_state" ? trimState(await deps.state())
     : name === "exit_sweep" ? await deps.exitSweep()
     : name === "model_fit" ? await deps.modelFit()
     // An unknown tool name is reported to the model as data, never thrown: the

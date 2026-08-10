@@ -1534,3 +1534,25 @@ body {
 }
 
 .browser__hint { color: var(--clm-muted); font-size: var(--clm-fs-sm); }
+
+/* The Analyst's live working-out.
+ *
+ * Shown only while the answer is still empty, and retired the moment real
+ * text arrives. Quiet, monospaced and dimmer than any answer, because the
+ * one thing worse than an opaque wait is mistaking the model's deliberation
+ * for its conclusion. Fixed height so a long think does not shove the
+ * conversation around as it streams. */
+.turn__reasoning {
+  display: block;
+  margin-top: 10px;
+  max-height: 76px;
+  overflow: hidden;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--clm-muted);
+  opacity: 0.72;
+  /* Fades at the top edge so the tail reads as a window onto a longer
+     stream rather than a paragraph that happens to start mid-sentence. */
+  mask-image: linear-gradient(transparent, #000 34%);
+  -webkit-mask-image: linear-gradient(transparent, #000 34%);
+}

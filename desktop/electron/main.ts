@@ -33,6 +33,7 @@ async function askAnalyst(
   question: string,
   onDelta: (text: string) => void,
   onTool: (name: string) => void,
+  onReasoning?: (text: string) => void,
 ): Promise<{ text: string; consulted: string[] }> {
   const res = await fetch(`${ENGINE}/api/analyst`, {
     method: "POST",
@@ -42,8 +43,12 @@ async function askAnalyst(
   const consulted: string[] = []
   const { text } = await streamCompletion(res, {
     onText: onDelta,
-    // Reasoning is deliberately dropped rather than shown: GLM-5.2 emits its
-    // working-out as reasoning_content, and the transcript is for answers.
+    // Reasoning goes to its own channel rather than the bin. A grounded answer
+    // over the whole ledger takes real time, and a spinner that says nothing
+    // for a minute is indistinguishable from a hang -- which is exactly how it
+    // was reported. Showing the working-out makes the wait legible, and it is
+    // kept visually separate because it is the model thinking, not answering.
+    onReasoning,
   })
   // The engine reports the reads it ran in a trailing header rather than
   // inline, so grounding stays visible without polluting the text stream.
@@ -308,6 +313,7 @@ void app.whenReady().then(() => {
         question,
         (delta) => win?.webContents.send("analyst:delta", delta),
         (name) => win?.webContents.send("analyst:tool", name),
+        (r) => win?.webContents.send("analyst:reasoning", r),
       )
     } catch (e) {
       // Surface the real reason: "analyst unavailable" sends someone hunting

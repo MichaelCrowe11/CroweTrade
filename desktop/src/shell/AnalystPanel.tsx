@@ -77,6 +77,7 @@ export function AnalystPanel({ mint }: { mint?: string | null }) {
   const [busy, setBusy] = useState(false)
   const [live, setLive] = useState("")
   const [liveTools, setLiveTools] = useState<string[]>([])
+  const [liveReasoning, setLiveReasoning] = useState("")
   const endRef = useRef<HTMLDivElement>(null)
 
   const shown = useTypewriter(live)
@@ -84,9 +85,16 @@ export function AnalystPanel({ mint }: { mint?: string | null }) {
   useEffect(() => {
     const offDelta = window.crowetrade?.onAskDelta?.((d) => setLive((t) => t + d))
     const offTool = window.crowetrade?.onAskTool?.((n) => setLiveTools((t) => [...t, n]))
+    const offReason = window.crowetrade?.onAskReasoning?.((r) =>
+      // Keep only the tail: this is a live "what is it considering right now"
+      // readout, not a transcript, and an unbounded string would grow the DOM
+      // node for the length of a long deliberation.
+      setLiveReasoning((t) => (t + r).slice(-600)),
+    )
     return () => {
       offDelta?.()
       offTool?.()
+      offReason?.()
     }
   }, [])
 
@@ -102,6 +110,7 @@ export function AnalystPanel({ mint }: { mint?: string | null }) {
     setBusy(true)
     setLive("")
     setLiveTools([])
+    setLiveReasoning("")
     setTurns((t) => [...t, { role: "you", text: question }, { role: "analyst", text: "", pending: true }])
 
     try {
@@ -189,6 +198,14 @@ export function AnalystPanel({ mint }: { mint?: string | null }) {
                   <span className="turn__thinking">
                     reading the ledger
                     <span className="turn__dots" aria-hidden="true" />
+                    {/* The model's own working-out while it reads. A grounded
+                        answer over the whole ledger takes real time, and a
+                        wordless spinner for a minute reads as a hang. This is
+                        deliberately quiet and monospaced: it is a machine
+                        thinking out loud, not the answer. */}
+                    {liveReasoning !== "" && (
+                      <span className="turn__reasoning mono">{liveReasoning}</span>
+                    )}
                   </span>
                 ) : (
                   <p className="turn__text">

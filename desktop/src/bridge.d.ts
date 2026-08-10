@@ -35,6 +35,8 @@ interface Window {
     ask?: (question: string) => Promise<{ text: string; consulted: string[] }>
     onAskDelta?: (cb: (delta: string) => void) => () => void
     onAskTool?: (cb: (name: string) => void) => () => void
+    /** The model's working-out, streamed separately from the answer. */
+    onAskReasoning?: (cb: (text: string) => void) => () => void
     orchestrator?: {
       ask: (goal: string) => Promise<{ text: string }>
       stop: () => Promise<void>

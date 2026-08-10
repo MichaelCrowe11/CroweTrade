@@ -39,6 +39,11 @@ contextBridge.exposeInMainWorld("crowetrade", {
     ipcRenderer.on("analyst:tool", handler)
     return () => ipcRenderer.removeListener("analyst:tool", handler)
   },
+  onAskReasoning: (cb: (text: string) => void): (() => void) => {
+    const handler = (_e: IpcRendererEvent, text: string): void => cb(text)
+    ipcRenderer.on("analyst:reasoning", handler)
+    return () => ipcRenderer.removeListener("analyst:reasoning", handler)
+  },
 
   orchestrator: {
     /** Run the agent loop toward a goal. Resolves with its final prose. */
