@@ -38,6 +38,7 @@ import {
   type ModelRefusal,
 } from "./strategy.js"
 import { computeFeatures } from "../../shared/features.js"
+import { hasDrifted } from "../../shared/trajectory.js"
 import { fit, score, buildFeatureVector, type FeatureSnapshot } from "../../shared/model.js"
 import { liveArmed } from "../../shared/preflight.js"
 import { parseKeypair, base58, verifyPolicySignature } from "../../shared/signer.js"
@@ -1109,6 +1110,25 @@ export class Ledger extends DurableObject<Env> {
           continue
         }
 
+        // FIRST-SIGHT DRIFT. Checked here rather than in decideEntries
+        // because only here do we know the price we would actually pay: the
+        // quote's implied entry, not the feed's last print. This is the gate
+        // for the finding that the engine was buying tokens that had already
+        // run +142.8% since it first saw them.
+        const firstSight = this.sql().exec<{ price: number | null }>(
+          "SELECT price FROM decisions WHERE mint = ? ORDER BY at ASC LIMIT 1", c.mint,
+        ).toArray()[0]?.price ?? null
+        const impliedEntry = (e.sizeSol * solUsd) / (Number(q.outAmount) / 10 ** decimals)
+        if (hasDrifted(firstSight, impliedEntry, policy.entry.maxDriftSinceFirstSightPct)) {
+          const runPct = firstSight && firstSight > 0
+            ? ((impliedEntry - firstSight) / firstSight) * 100 : null
+          this.event("entry_skipped", {
+            symbol: c.symbol, mint: c.mint, reason: "already ran since first sight",
+            runPct: runPct === null ? null : Number(runPct.toFixed(1)),
+          })
+          continue
+        }
+
         // Build and simulate the real transaction before committing to the
         // position. A route that quotes but does not execute is a trade we
         // would have paid fees to fail at.
@@ -1382,8 +1402,40 @@ export class Ledger extends DurableObject<Env> {
           Date.now() - 30 * 60_000,
         ).one().n,
         deathRate: (cal.labeled ?? 0) > 0 ? (cal.died ?? 0) / (cal.labeled ?? 1) : null,
+        // MEASURED FROM FIRST SIGHT, both of them. That makes the pair a
+        // valid SELECTION test (did the tokens we chose move more than the
+        // ones we refused, from the moment we saw each?) and an INVALID
+        // profitability claim, which is exactly how it was misread on
+        // 2026-08-10 by both the Analyst and by me.
         avgForwardRetEnteredPct: cal.entered_ret,
         avgForwardRetEligibleSkippedPct: cal.skipped_ret,
+        // The three fields below exist so that misreading is no longer
+        // possible from the readout alone. `preEntryRunPct` is the move that
+        // happens BEFORE we buy and therefore cannot be captured;
+        // `realizedFromEntryPct` is what the same trades actually returned.
+        // On the day this was added: forward +145.9%, pre-entry run +142.8%,
+        // realized -14.6%. The first number is almost entirely the second.
+        entryTiming: (() => {
+          const r = sql.exec<{
+            n: number; run_pct: number | null; realized_pct: number | null; mins: number | null
+          }>(
+            `SELECT COUNT(*) AS n,
+                    AVG((p.entry_price - d.price) / d.price * 100) AS run_pct,
+                    AVG(p.pnl_pct) AS realized_pct,
+                    AVG((p.opened_at - d.at) / 60000.0) AS mins
+               FROM decisions d JOIN positions p ON p.mint = d.mint
+              WHERE d.entered = 1 AND d.voided = 0 AND d.price > 0
+                AND p.entry_price > 0 AND p.closed_at IS NOT NULL`,
+          ).one()
+          const round = (v: number | null) => (v === null ? null : Number(v.toFixed(1)))
+          return {
+            closedEntries: r.n,
+            preEntryRunPct: round(r.run_pct),
+            realizedFromEntryPct: round(r.realized_pct),
+            minutesFirstSightToEntry: round(r.mins),
+            note: "forward returns above are measured from FIRST SIGHT, so they include preEntryRunPct, which we never capture. realizedFromEntryPct is what these trades actually returned.",
+          }
+        })(),
       },
       // Alert plumbing, exposed for the same reason the skip reasons are: a
       // notification nobody receives and nobody can see failing is worse than

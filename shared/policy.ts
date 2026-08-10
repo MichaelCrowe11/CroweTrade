@@ -95,6 +95,24 @@ export interface PolicyEnvelope {
      * The model sits BEHIND the gates and can only refuse, never override:
      * a hard veto stays a hard veto whatever the model believes.
      */
+    /**
+     * Refuse an entry whose price has already run this far since OUR OWN
+     * first sight of the token.
+     *
+     * Added 2026-08-10 on measurement, and it is the most consequential entry
+     * rule in the file. Across 73 entries, price moved +142.8% in the 23
+     * minutes between first sight and entry, and 54 of 73 were bought HIGHER
+     * than first sight. The calibration readout that appeared to show
+     * selection working (+145.9% forward return on entered tokens) was
+     * measuring almost exactly that pre-entry run, while the same trades
+     * realized -14.6%. The engine was buying tops.
+     *
+     * maxChangeH1Pct cannot do this job: it reads the FEED's hourly change,
+     * a third party's claim about the last hour. This reads the price we
+     * recorded when we first saw the token against the price we are about to
+     * pay, which is the only comparison that describes the actual trade.
+     */
+    maxDriftSinceFirstSightPct: number
     minModelProb: number | null
     /**
      * Identity of the exact frozen weights (shared/armed-model.ts). In the
@@ -193,6 +211,15 @@ export const PAPER_POLICY: PolicyEnvelope = {
      * against the baseline cohort's record, the same head-to-head shape as
      * launchpad vs promotional.
      */
+    /**
+     * 30% is a deliberate first guess, not a fitted value, and it should be
+     * revisited once the cohort has trades. The measured average run was
+     * +142.8%, so this refuses the bulk of what was being bought while still
+     * allowing a token to move while our own three confirming ticks accrue.
+     * Too tight would refuse everything, since some drift is unavoidable
+     * given the engine only enters after observing a token.
+     */
+    maxDriftSinceFirstSightPct: 30,
     minModelProb: 0.2,
     modelFingerprint: "m20260809-5743r-auc802",
   },

@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { trajectoryConfirms, type Trajectory } from "../../../shared/trajectory.ts"
+import { trajectoryConfirms, hasDrifted, type Trajectory } from "../../../shared/trajectory.ts"
 
 /**
  * The trajectory gate decides whether OUR OWN observed tape supports an entry.
@@ -77,4 +77,49 @@ test("held is always permitted: it re-prices an open position, not a purchase", 
 test("an empty allowlist buys nothing at all", () => {
   assert.equal(originAllowed("launchpad", []), false)
   assert.equal(originAllowed("profile", []), false)
+})
+
+// ── First-sight drift ──────────────────────────────────────────────────────
+//
+// The gate built from the finding that the engine buys tokens that already
+// ran: +142.8% average between first sight and entry, 54 of 73 bought higher.
+
+test("a token that already ran past the threshold is refused", () => {
+  // Doubled since we first saw it: exactly the shape that was losing money.
+  assert.equal(hasDrifted(1.0, 2.0, 30), true)
+  assert.equal(hasDrifted(1.0, 1.31, 30), true)
+})
+
+test("modest drift inside the threshold is allowed", () => {
+  assert.equal(hasDrifted(1.0, 1.29, 30), false)
+  assert.equal(hasDrifted(1.0, 1.0, 30), false)
+})
+
+test("a token that FELL since first sight is never refused for drifting", () => {
+  // Drift is directional. Buying lower than we first saw is the opposite of
+  // chasing, and this gate must not block it.
+  assert.equal(hasDrifted(1.0, 0.5, 30), false)
+})
+
+test("an unknown first-sight price REFUSES, like every other gate here", () => {
+  assert.equal(hasDrifted(null, 1.0, 30), true)
+  assert.equal(hasDrifted(undefined, 1.0, 30), true)
+  assert.equal(hasDrifted(0, 1.0, 30), true)
+  assert.equal(hasDrifted(NaN, 1.0, 30), true)
+})
+
+test("a non-finite entry price refuses rather than comparing as false", () => {
+  assert.equal(hasDrifted(1.0, NaN, 30), true)
+  assert.equal(hasDrifted(1.0, 0, 30), true)
+})
+
+test("the boundary is float, not exact, and the test says so", () => {
+  // (1.30 - 1.0) / 1.0 * 100 evaluates to 30.000000000000004, so a nominal
+  // "exactly +30%" is REFUSED. That is not worth an epsilon: the threshold is
+  // a judgement call in whole percent and a 4e-15 error at the boundary
+  // cannot matter, whereas pretending to exactness would hide a real property
+  // of the arithmetic from whoever reads this next.
+  assert.equal(hasDrifted(1.0, 1.30, 30), true, "float boundary lands just over")
+  assert.equal(hasDrifted(1.0, 1.29, 30), false, "clearly inside")
+  assert.equal(hasDrifted(1.0, 1.31, 30), true, "clearly outside")
 })
