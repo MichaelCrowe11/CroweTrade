@@ -27,10 +27,13 @@ green light to size up.
   live arming, envelope type, expiry, wallet signature, per-trade cap, daily
   cap, position slots, wallet balance including an exit reserve, simulation
   result, and price impact. A refusal names the first thing wrong.
-- `engine/src/execution/send.ts` — the only module in the codebase that can
-  broadcast. Signing is injected, so the module never holds key material.
-  Includes confirmation polling that treats "not yet confirmed" as a real state
-  rather than an error.
+- `engine/src/execution/live.ts` — the ONLY module in the codebase that can
+  broadcast, verified: `sendTransaction` appears in exactly one other file,
+  inside a comment saying it does not exist there. Entries and exits share this
+  path, because an engine that can enter live and cannot exit live is worse
+  than one that does neither. The one asymmetry is policy, not mechanism:
+  exits skip the entry guard, since the kill switch, daily cap and breaker
+  exist to stop NEW risk and must never trap a position that is already open.
 - `engine/src/execution/swap.ts` — unchanged. Builds and simulates, never
   sends. Still the entry gate.
 
@@ -46,14 +49,21 @@ green light to size up.
   network accepted the signature and failed only on the unfunded wallet, which
   is proof the crypto is correct, obtained without spending anything.
 
+- `shared/reconcile.ts` — what ACTUALLY happened, read from the chain's pre-
+  and post-balances rather than from the quote. 10 tests. The cases it is built
+  around are the ones where a naive reader records a confident wrong number:
+  missing transaction meta returns null rather than a zero fill (a zero fill
+  would tell the book the trade did nothing), a mint held across two token
+  accounts is summed rather than sampled, balances belonging to another owner
+  are never credited to us, and amounts stay bigint so a 2^53+1 base-unit
+  balance survives. `tca()` compares quoted against realized — the real number
+  the old Python stack only claimed to compute.
+
 ## What is NOT built yet
 
-- Reconciliation writing confirmed on-chain fills back into `positions`.
-- Real TCA comparing quoted price to realized fill.
-- A live exit path. **This matters: today the engine could enter live and
-  could not exit live.** Do not arm entries before exits exist.
-- The signer implementation itself (`signTx`) — deliberately absent until a key
-  exists to sign with.
+- Wiring `live.ts` into the tick, so the engine calls it instead of paper
+  fills. Deliberately last: every piece is testable in isolation first.
+- A second-machine test of the whole path.
 
 ---
 
