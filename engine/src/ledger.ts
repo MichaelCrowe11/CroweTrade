@@ -1292,7 +1292,18 @@ export class Ledger extends DurableObject<Env> {
         nowMs: now,
         thresholdHours: STALL_HOURS,
       })
-      if (stalled) {
+      // A sent-marker that OUTLIVES the flush. queueAlert only dedupes while
+      // the row is still pending, and flushAlerts deletes it on success, so
+      // without this the same stall re-queues every single tick. Observed
+      // live: one email per minute, which is precisely the "second copy
+      // teaches you to ignore the first" failure this file warns about.
+      // Clearing on a healthy tick means a later stall is a fresh episode,
+      // not silently suppressed by an old marker.
+      if (!stalled) this.metaSet("opsent:stall", "")
+      const stallBucket = String(Math.floor(now / (STALL_HOURS * 3_600_000)))
+      const alreadyTold = this.metaGet("opsent:stall") === stallBucket
+      if (stalled && !alreadyTold) {
+        this.metaSet("opsent:stall", stallBucket)
         const hours = lastEntry === null ? null : ((now - lastEntry) / 3_600_000).toFixed(1)
         this.queueAlert(
           `stall:${Math.floor(now / 3_600_000)}`,
