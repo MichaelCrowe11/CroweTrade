@@ -7,3 +7,6 @@ worker-configuration.d.ts
 
 # Never commit live-trading values
 .env.live
+
+# Collaborator credential (research tier). Never committed.
+.research-token

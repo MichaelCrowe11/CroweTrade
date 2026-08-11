@@ -1,0 +1,33 @@
+# Template for engine/.dev.vars, which is gitignored because the real file
+# holds live credentials. Copy this, then fill in only what you actually need.
+#
+# The devcontainer copies it for you on first create. Its purpose is not to make
+# local trading work, it is to make `wrangler types` emit an Env with the right
+# keys so the engine typechecks on a fresh clone.
+#
+# Every value here is safe to leave empty. Absence is the safe state throughout
+# this engine: an unset secret disables the surface it belongs to rather than
+# enabling some weaker version of it.
+
+# Operator credential. Unlocks kill, veto, tick and raw inference, plus
+# everything the research tier reaches.
+ENGINE_ADMIN_TOKEN=
+
+# Collaborator credential. Unlocks the corpus (/api/research), the gates,
+# proposals and the Analyst. Never reaches kill, veto, tick or /api/llm.
+# Leave empty and that whole tier is inert. See shared/auth.ts.
+ENGINE_RESEARCH_TOKEN=
+
+# Solana RPC with an actual rate limit. Public RPC returns 429 on
+# getTokenLargestAccounts every time, and 403 to requests from Workers.
+HELIUS_API_KEY=
+
+# Product analytics. Unset means events are dropped, not queued.
+POSTHOG_API_KEY=
+
+# Empty on purpose: a local dev tick must never send a real alert email.
+RESEND_API_KEY=
+
+# x402 paid-API surface. Not needed for engine or terminal work.
+X402_PAY_TO=
+X402_FACILITATOR=

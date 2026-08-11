@@ -1,0 +1,17 @@
+# Normalise line endings. Without this a Windows checkout rewrites every file
+# to CRLF, and the first commit from that machine reads as a whole-repo diff
+# that buries the actual change.
+* text=auto eol=lf
+
+# Shell scripts must keep LF even on Windows: CRLF makes the shebang line
+# unparseable and the script fails with a "bad interpreter" error naming a
+# file that plainly exists.
+*.sh text eol=lf
+
+# Binary, never touched.
+*.png binary
+*.jpg binary
+*.icns binary
+*.ico binary
+*.dmg binary
+*.ipynb -text

@@ -12,6 +12,7 @@
 import { Ledger } from "./ledger.js"
 import { analystStream, ANALYST_MODEL } from "./analyst.js"
 import { priceFor, paymentRequired, settle, ROUTES, SOLANA_MAINNET } from "./x402.js"
+import { tierSatisfied, type Tier } from "../../shared/auth.js"
 
 export { Ledger }
 
@@ -28,15 +29,67 @@ function json(body: unknown, status = 200): Response {
   })
 }
 
-async function authorized(req: Request, env: Env): Promise<boolean> {
-  const token = req.headers.get("Authorization")?.replace(/^Bearer\s+/i, "")
-  if (!token || !env.ENGINE_ADMIN_TOKEN) return false
+/**
+ * Two capability tiers, one comparison.
+ *
+ * "admin" is the operator: kill, veto, tick, raw inference. Anything that
+ * changes what the engine does with money, or spends without grounding.
+ * "research" is a second person: the corpus, the fitted model, the gates, the
+ * Analyst. Everything it reaches only reads, or costs inference that arrives
+ * attached to a question about the ledger.
+ *
+ * The admin token satisfies BOTH tiers, so nothing the operator could already
+ * do stops working and the installed terminal keeps its single credential. A
+ * research token satisfies only its own tier and lives in its own secret, so
+ * revoking a collaborator is one `wrangler secret delete ENGINE_RESEARCH_TOKEN`
+ * and never rotates the operator's token or locks them out of their own app.
+ *
+ * When ENGINE_RESEARCH_TOKEN is unset the whole tier is inert, the same way the
+ * live-trading path is inert without its secrets. Absence is the safe state.
+ */
+async function sameToken(presented: string, expected: string | undefined): Promise<boolean> {
+  if (!expected) return false
   const enc = new TextEncoder()
   const [a, b] = await Promise.all([
-    crypto.subtle.digest("SHA-256", enc.encode(token)),
-    crypto.subtle.digest("SHA-256", enc.encode(env.ENGINE_ADMIN_TOKEN)),
+    crypto.subtle.digest("SHA-256", enc.encode(presented)),
+    crypto.subtle.digest("SHA-256", enc.encode(expected)),
   ])
+  // Digests, so the comparison never leaks the length of either string.
   return crypto.subtle.timingSafeEqual(a, b)
+}
+
+/**
+ * What a refused caller is told.
+ *
+ * TODO(michael): decide this one. It is a real trade-off, not a formality.
+ *
+ * Today every refusal is an identical 401 "unauthorized", so a collaborator
+ * whose research token hits /api/kill sees exactly what a stranger with no
+ * token sees. That is the quiet option: a stolen token learns nothing about
+ * what it is or what else exists. It is also the option that will have Dannie
+ * convinced his credential is broken while it is working perfectly.
+ *
+ * The alternative is 403 with a reason ("research token cannot reach this
+ * route"), which is honest to a colleague and informative to a prober.
+ *
+ * Only the refusal path calls this, so recomputing the match here is free.
+ * Implement the body you want and swap the four admin guards over to it, or
+ * delete this and keep the uniform 401.
+ */
+// async function refusal(req: Request, env: Env, tier: Tier): Promise<Response> {
+//   return json({ error: "unauthorized" }, 401)
+// }
+
+async function authorized(req: Request, env: Env, tier: Tier = "admin"): Promise<boolean> {
+  const token = req.headers.get("Authorization")?.replace(/^Bearer\s+/i, "")
+  if (!token) return false
+  // Both comparisons always run rather than short-circuiting on the first
+  // match, so the work done does not depend on which secret was presented.
+  const [admin, research] = await Promise.all([
+    sameToken(token, env.ENGINE_ADMIN_TOKEN),
+    sameToken(token, env.ENGINE_RESEARCH_TOKEN),
+  ])
+  return tierSatisfied(tier, { admin, research })
 }
 
 function ledger(env: Env) {
@@ -142,7 +195,7 @@ export default {
       // construction (proposals write nothing an engine consults), so the
       // token guards spend, not capability.
       if (url.pathname === "/api/analyst" && req.method === "POST") {
-        if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
+        if (!(await authorized(req, env, "research"))) return json({ error: "unauthorized" }, 401)
         const body = (await req.json().catch(() => ({}))) as { question?: string }
         const question = (body.question ?? "").trim()
         if (!question) return json({ error: "question required" }, 400)
@@ -182,7 +235,7 @@ export default {
       // data (Helius authorities, the creators table, the labeled corpus)
       // instead of recomputed in the app against a weaker feed.
       if (url.pathname === "/api/gates" && req.method === "POST") {
-        if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
+        if (!(await authorized(req, env, "research"))) return json({ error: "unauthorized" }, 401)
         const body = (await req.json().catch(() => null)) as {
           mints?: unknown; detail?: unknown
         } | null
@@ -215,15 +268,16 @@ export default {
             })
       }
 
-      // Proposals an agent has recorded, for the operator to review. Read-only
-      // and admin-gated: it is a queue of suggestions, not a control surface.
+      // Proposals an agent has recorded, for the operator to review. Read-only,
+      // so it sits at the research tier: it is a queue of suggestions, not a
+      // control surface. Acting on one still takes an admin route.
       if (url.pathname === "/api/proposals" && req.method === "GET") {
-        if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
+        if (!(await authorized(req, env, "research"))) return json({ error: "unauthorized" }, 401)
         return json(await ledger(env).listProposals())
       }
 
       if (url.pathname === "/api/research" && req.method === "POST") {
-        if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
+        if (!(await authorized(req, env, "research"))) return json({ error: "unauthorized" }, 401)
         const body = (await req.json().catch(() => ({}))) as { sql?: string }
         if (!body.sql) return json({ error: "sql required" }, 400)
         return json(await ledger(env).researchQuery(body.sql))

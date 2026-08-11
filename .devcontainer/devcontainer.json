@@ -1,0 +1,17 @@
+{
+  "name": "CroweTrade",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-24-bookworm",
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "typescript.tsdk": "desktop/node_modules/typescript/lib",
+        "files.eol": "\n"
+      }
+    }
+  },
+  "forwardPorts": [5273],
+  "portsAttributes": {
+    "5273": { "label": "terminal renderer (Vite)", "onAutoForward": "silent" }
+  }
+}
