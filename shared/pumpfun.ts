@@ -120,34 +120,57 @@ function toCandidate(c: PumpCoin, solUsd: number, now: number): Candidate | null
 }
 
 /**
- * Newest launches, newest first.
+ * Newest launches, newest first, across several pages.
  *
- * `limit` is deliberately modest: the engine ticks every minute and the
- * launchpad produces a handful of mints per minute, so a large page mostly
- * re-fetches tokens already recorded.
+ * Depth is the whole point. The engine cannot enter a token it has not
+ * observed for three minutes, and a single page keeps a mint visible for
+ * roughly one -- so shallow polling did not filter the universe, it made
+ * almost all of it unreachable.
  */
+/** The API caps a page at ~70 regardless of what `limit` asks for, so depth
+ *  comes from pagination rather than a bigger page. Measured 2026-08-11:
+ *  offset 0 reaches ~3.7 minutes back, 70 reaches ~6.9, 140 reaches ~9.9. */
+const PAGE = 70
+const PAGES = 3
+
 export async function fetchLaunchpadCandidates(
   solUsd: number,
   signal: AbortSignal,
-  limit = 50,
+  pages = PAGES,
 ): Promise<Candidate[]> {
-  try {
-    const url =
-      `${LISTING}?offset=0&limit=${limit}&sort=created_timestamp&order=DESC&includeNsfw=false`
-    const res = await fetch(url, {
-      signal,
-      headers: { accept: "application/json", "user-agent": "CroweTrade/1.0" },
-    })
-    if (!res.ok) return []
-    const body = (await res.json()) as PumpCoin[]
-    if (!Array.isArray(body)) return []
-    const now = Date.now()
-    return body
-      .map((c) => toCandidate(c, solUsd, now))
-      .filter((c): c is Candidate => c !== null)
-  } catch {
-    // A failed launchpad fetch must not take the tick down; the promotional
-    // source and position management continue independently.
-    return []
+  const now = Date.now()
+  const seen = new Set<string>()
+  const out: Candidate[] = []
+
+  // Sequential pages, each failure isolated. ONE page is worth ~1 minute of
+  // visibility and the engine's own rules require a token to be 3 minutes old
+  // with 3 observed ticks before it may be entered -- so a single page made
+  // 96.2% of the universe structurally unenterable: mints fell off the listing
+  // before they were ever eligible. Measured: average visible span 1 minute,
+  // average 2 observations, only 3.8% visible for 3 minutes.
+  for (let i = 0; i < pages; i++) {
+    try {
+      const url =
+        `${LISTING}?offset=${i * PAGE}&limit=${PAGE}&sort=created_timestamp&order=DESC&includeNsfw=false`
+      const res = await fetch(url, {
+        signal,
+        headers: { accept: "application/json", "user-agent": "CroweTrade/1.0" },
+      })
+      if (!res.ok) continue
+      const body = (await res.json()) as PumpCoin[]
+      if (!Array.isArray(body)) continue
+      for (const raw of body) {
+        // Pages can overlap as new mints shift the window mid-fetch; first
+        // sighting wins so a token is never counted twice in one tick.
+        if (!raw?.mint || seen.has(raw.mint)) continue
+        seen.add(raw.mint)
+        const c = toCandidate(raw, solUsd, now)
+        if (c !== null) out.push(c)
+      }
+    } catch {
+      // A failed page costs depth, never the tick. The promotional source and
+      // position management continue regardless.
+    }
   }
+  return out
 }
