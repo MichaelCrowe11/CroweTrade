@@ -41,7 +41,7 @@ import { computeFeatures } from "../../shared/features.js"
 import { hasDrifted } from "../../shared/trajectory.js"
 import { validateProposal } from "../../shared/proposal.js"
 import { fit, score, buildFeatureVector, type FeatureSnapshot } from "../../shared/model.js"
-import { liveArmed } from "../../shared/preflight.js"
+import { liveArmed, isStalled } from "../../shared/preflight.js"
 import { parseKeypair, base58, verifyPolicySignature } from "../../shared/signer.js"
 import { executeSwap, walletBalanceSol } from "./execution/live.js"
 import { ARMED_MODEL } from "../../shared/armed-model.js"
@@ -56,6 +56,11 @@ import {
 } from "./alert.js"
 
 /** Slippage tolerance requested on every quote, entry and exit. */
+/** Hours of "able to trade but did not" before the engine reports itself.
+ *  Two is short enough to catch an outage the same session and long enough
+ *  that an ordinarily quiet stretch does not page anyone. */
+const STALL_HOURS = 2
+
 const SLIPPAGE_BPS = 300
 
 interface PositionRow {
@@ -1264,6 +1269,53 @@ export class Ledger extends DurableObject<Env> {
         entered += 1
       }
     }
+
+    // SILENT STALL. The absence of events is itself an event, and this
+    // project has now been bitten three times by an engine that looked
+    // healthy and entered nothing for hours. Evaluated every tick; the alert
+    // key is bucketed by hour so a persistent stall emails once an hour
+    // rather than once a minute.
+    {
+      const lastEntry = this.sql().exec<{ at: number | null }>(
+        "SELECT MAX(opened_at) AS at FROM positions",
+      ).one().at
+      const day = new Date(now).toISOString().slice(0, 10)
+      const spent = Number(this.metaGet(`spend:${day}`) ?? "0")
+      const stalled = isStalled({
+        canEnter: !killed && !breakerOpen,
+        killed,
+        breakerOpen,
+        openSlots: Math.max(0, policy.maxOpenPositions - this.openPositions().length),
+        remainingSol: Math.max(0, policy.dailyCapSol - spent),
+        perTradeCapSol: policy.perTradeCapSol,
+        lastEntryAt: lastEntry,
+        nowMs: now,
+        thresholdHours: STALL_HOURS,
+      })
+      if (stalled) {
+        const hours = lastEntry === null ? null : ((now - lastEntry) / 3_600_000).toFixed(1)
+        this.queueAlert(
+          `stall:${Math.floor(now / 3_600_000)}`,
+          "CroweTrade: engine can trade but has not",
+          [
+            `The engine has entered nothing for ${hours === null ? "as long as records go back" : hours + " hours"},`,
+            "while able to: not killed, breaker closed, slots free, budget remaining.",
+            "",
+            "This is not the safety system working. It means every candidate is",
+            "being refused somewhere upstream, which has happened three times in",
+            "this project and never announced itself.",
+            "",
+            "Diagnose: force a tick and read the result. `{scanned: N, entered: 0}`",
+            "with NO entry_skipped events means the filter is in decideEntries,",
+            "upstream of the quote. Skip reasons in the decisions table describe",
+            "the calibration corpus, not the live entry path, and will mislead.",
+            "",
+            "https://crowetrade-engine.yellow-block-3adc.workers.dev/api/positions",
+          ].join("\n"),
+        )
+      }
+    }
+
 
     capture(this.env, this.ctx, "engine_tick", {
       scanned: candidates.length, entered, exited, open: this.openPositions().length, killed,

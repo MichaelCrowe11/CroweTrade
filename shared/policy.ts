@@ -162,7 +162,20 @@ export const PAPER_POLICY: PolicyEnvelope = {
   version: 1,
   product: "crowetrade-paper",
   waiverSha256: "unsigned-paper-phase",
-  perTradeCapSol: 0.5,
+  /**
+   * Lowered 0.5 -> 0.1 on 2026-08-10, together with minLiquidityUsd, because
+   * the two must be consistent or neither works.
+   *
+   * The arithmetic: impact is roughly trade/depth, so a 0.5 SOL trade (~$42)
+   * needs ~$2,800 of depth to stay under the 1.5% cost hurdle. Launchpad
+   * curves average $149. A 0.5 SOL order into this venue is not a trade, it is
+   * the whole pool. Measured: the engine went six hours without an entry.
+   *
+   * At 0.1 SOL (~$8.40) an $800 curve prices at about 1.05%, inside the
+   * hurdle. Smaller trades also mean MORE of them per day of budget, and more
+   * closes is exactly what a policy with zero evidence needs.
+   */
+  perTradeCapSol: 0.1,
   /**
    * Raised 10 -> 50 on 2026-08-08 to accelerate the validation sample toward
    * the 100-close funding criterion. This changes how MANY trades happen, not
@@ -195,7 +208,23 @@ export const PAPER_POLICY: PolicyEnvelope = {
      * "3 minutes" is the real floor regardless of what this says.
      */
     minTokenAgeMinutes: 3,
-    minLiquidityUsd: 3_000,
+    /**
+     * Lowered 3,000 -> 800 on 2026-08-10. See perTradeCapSol above: these two
+     * are one decision, not two.
+     *
+     * The old floor was a DexScreener-era number. Pump.fun `real_sol_reserves`
+     * on a fresh mint is a few SOL and is not the same quantity as a pool's
+     * TVL; measured over 5,798 launchpad ticks the average was $149 and only
+     * 1.1% cleared $3,000, so the floor refused ~99% of the only universe the
+     * allowlist admits.
+     *
+     * 800 is not a claim that $800 is safe. It is the depth at which the
+     * REAL instrument -- maxEntryImpactPct, measured from a live Jupiter quote
+     * rather than proxied from reported (and spoofable) depth -- can make a
+     * meaningful judgement at 0.1 SOL. The floor's remaining job is only to
+     * avoid spending a quote on a curve that cannot possibly pass.
+     */
+    minLiquidityUsd: 800,
     maxChangeH1Pct: 80,
     maxEntryImpactPct: 1.5,
     allowedOrigins: ["launchpad"],

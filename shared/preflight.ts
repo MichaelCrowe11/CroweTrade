@@ -164,3 +164,44 @@ export function preflight(intent: TradeIntent, ctx: PreflightContext): string | 
 
   return null
 }
+
+/**
+ * Is the engine silently doing nothing?
+ *
+ * The failure mode this project keeps hitting, three times now: the public RPC
+ * answering 403 to Workers, the model gate refusing everything, and a momentum
+ * filter refusing an entire venue. Every time the engine looked perfectly
+ * healthy — ticking, `canEnter` true, slots open, breaker closed — and entered
+ * nothing for hours. Every time it was found by a human happening to look.
+ *
+ * The absence of events is itself an event. This detects it: able to trade,
+ * with room to trade, and not trading.
+ *
+ * Deliberately requires ALL the permissive conditions. A quiet engine that is
+ * killed, breakered, capped or full is quiet for a REASON, and alerting on
+ * those would be crying wolf about the safety system working.
+ */
+export interface StallCheck {
+  canEnter: boolean
+  killed: boolean
+  breakerOpen: boolean
+  openSlots: number
+  remainingSol: number
+  perTradeCapSol: number
+  /** Epoch ms of the last entry, or null if there has never been one. */
+  lastEntryAt: number | null
+  nowMs: number
+  /** Hours of silence before this counts as a stall. */
+  thresholdHours: number
+}
+
+export function isStalled(c: StallCheck): boolean {
+  if (c.killed || c.breakerOpen || !c.canEnter) return false
+  if (c.openSlots <= 0) return false
+  // No budget left is a cap, not a stall: the engine is refusing correctly.
+  if (c.remainingSol < c.perTradeCapSol) return false
+  // Never traded at all still counts once the threshold passes; a brand new
+  // deployment that never enters is exactly as broken as one that stopped.
+  const since = c.lastEntryAt === null ? Infinity : c.nowMs - c.lastEntryAt
+  return since >= c.thresholdHours * 3_600_000
+}

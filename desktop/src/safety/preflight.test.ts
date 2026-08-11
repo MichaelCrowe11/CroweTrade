@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { preflight, liveArmed, MIN_SOL_RESERVE, type TradeIntent, type PreflightContext } from "../../../shared/preflight.ts"
+import { preflight, liveArmed, isStalled, MIN_SOL_RESERVE, type TradeIntent, type PreflightContext, type StallCheck } from "../../../shared/preflight.ts"
 import { PAPER_POLICY } from "../../../shared/policy.ts"
 
 /**
@@ -93,10 +93,12 @@ test("per-trade cap is enforced at the boundary", () => {
 })
 
 test("the daily cap counts what is already spent, not just this trade", () => {
+  const size = LIVE.perTradeCapSol
   const intent = {
     ...OK_INTENT,
-    sizeSol: 0.5,
-    spentTodaySol: LIVE.dailyCapSol - 0.4,
+    sizeSol: size,
+    // Just under the cap, so only THIS trade tips it over.
+    spentTodaySol: LIVE.dailyCapSol - size / 2,
     walletBalanceSol: 99,
   }
   assert.match(preflight(intent, OK_CTX) ?? "", /over the .* cap/)
@@ -109,9 +111,10 @@ test("position slots are enforced", () => {
 
 test("the wallet must keep enough to EXIT, not merely to enter", () => {
   // Balance covers the trade exactly, leaving nothing for the sell's fee.
-  const intent = { ...OK_INTENT, sizeSol: 0.5, walletBalanceSol: 0.5 }
+  const size = LIVE.perTradeCapSol
+  const intent = { ...OK_INTENT, sizeSol: size, walletBalanceSol: size }
   assert.match(preflight(intent, OK_CTX) ?? "", /exit reserve/)
-  const ok = { ...OK_INTENT, sizeSol: 0.5, walletBalanceSol: 0.5 + MIN_SOL_RESERVE }
+  const ok = { ...OK_INTENT, sizeSol: size, walletBalanceSol: size + MIN_SOL_RESERVE }
   assert.equal(preflight(ok, OK_CTX), null)
 })
 
@@ -175,4 +178,50 @@ test("only the exact string '1' arms, so a truthy typo stays inert", () => {
 test("a non-string key does not arm", () => {
   assert.equal(liveArmed({ LIVE_TRADING: "1", TRADING_KEYPAIR: 123 }), false)
   assert.equal(liveArmed({ LIVE_TRADING: "1", TRADING_KEYPAIR: null }), false)
+})
+
+// ── Silent stall ───────────────────────────────────────────────────────────
+//
+// The absence of events is itself an event. Three outages in this project
+// looked identical: healthy engine, zero entries, found by a human looking.
+
+const HEALTHY: StallCheck = {
+  canEnter: true, killed: false, breakerOpen: false,
+  openSlots: 8, remainingSol: 40, perTradeCapSol: 0.1,
+  lastEntryAt: Date.parse("2026-08-10T18:00:00Z"),
+  nowMs: Date.parse("2026-08-11T00:00:00Z"), // six hours later
+  thresholdHours: 2,
+}
+
+test("able to trade, room to trade, not trading = STALLED", () => {
+  assert.equal(isStalled(HEALTHY), true)
+})
+
+test("a recent entry is not a stall", () => {
+  assert.equal(isStalled({ ...HEALTHY, lastEntryAt: HEALTHY.nowMs - 60_000 }), false)
+})
+
+test("quiet for a REASON is never a stall: that is the safety system working", () => {
+  // Alerting on these would cry wolf about the engine behaving correctly.
+  assert.equal(isStalled({ ...HEALTHY, killed: true }), false, "killed")
+  assert.equal(isStalled({ ...HEALTHY, breakerOpen: true }), false, "breaker")
+  assert.equal(isStalled({ ...HEALTHY, canEnter: false }), false, "cannot enter")
+  assert.equal(isStalled({ ...HEALTHY, openSlots: 0 }), false, "no slots")
+  assert.equal(isStalled({ ...HEALTHY, remainingSol: 0.05 }), false, "day cap reached")
+})
+
+test("having NEVER entered counts as a stall once the threshold passes", () => {
+  // A fresh deployment that never trades is exactly as broken as one that
+  // stopped, and is easier to miss because there is no 'before' to compare.
+  assert.equal(isStalled({ ...HEALTHY, lastEntryAt: null }), true)
+})
+
+test("exactly at the threshold trips, so the boundary is not a silent gap", () => {
+  const now = Date.parse("2026-08-11T00:00:00Z")
+  assert.equal(isStalled({ ...HEALTHY, nowMs: now, lastEntryAt: now - 2 * 3_600_000 }), true)
+  assert.equal(isStalled({ ...HEALTHY, nowMs: now, lastEntryAt: now - 2 * 3_600_000 + 1 }), false)
+})
+
+test("budget exactly covering one trade is NOT a stall excuse", () => {
+  assert.equal(isStalled({ ...HEALTHY, remainingSol: 0.1 }), true)
 })
