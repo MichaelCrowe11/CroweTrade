@@ -36,6 +36,7 @@ import {
   type OpenPosition,
   type Trajectory,
   type ModelRefusal,
+  emptyFunnel,
 } from "./strategy.js"
 import { computeFeatures } from "../../shared/features.js"
 import { hasDrifted } from "../../shared/trajectory.js"
@@ -1088,7 +1089,13 @@ export class Ledger extends DurableObject<Env> {
       }
 
       const modelRefusals: ModelRefusal[] = []
-      const entries = decideEntries(candidates, this.openPositions(), spentToday, solUsd, policy, now, trajectories, modelProbs, modelRefusals)
+      const funnel = emptyFunnel()
+      const entries = decideEntries(candidates, this.openPositions(), spentToday, solUsd, policy, now, trajectories, modelProbs, modelRefusals, funnel)
+      // Persisted every tick, overwriting: this answers "why did nothing
+      // happen JUST NOW", and a history of funnels would be noise. Three
+      // blockers hid in this chain in one evening, each found only by
+      // instrumenting it by hand afterwards.
+      this.metaSet("funnel", JSON.stringify({ at: now, ...funnel }))
       // A few named examples plus a count: enough to see WHO the model is
       // refusing and how often, without an event per refusal flooding the log.
       for (const r of modelRefusals.slice(0, 5)) {

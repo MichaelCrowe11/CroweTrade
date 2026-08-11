@@ -14,6 +14,9 @@ import type { Candidate } from "../../shared/dexscreener.js"
 import { evaluateGates, combineVerdict, type Verdict } from "../../shared/gates.js"
 import { passesModelGate } from "../../shared/model.js"
 import type { PolicyEnvelope } from "../../shared/policy.js"
+import { emptyFunnel, type FunnelCounts } from "../../shared/funnel.js"
+
+export { emptyFunnel, type FunnelCounts }
 
 export interface OpenPosition {
   id: string
@@ -87,6 +90,8 @@ export function decideEntries(
   modelProbs?: Map<string, number | null>,
   /** OUT: candidates the model gate alone refused, for observability. */
   modelRefusals?: ModelRefusal[],
+  /** OUT: where every candidate died. See FunnelCounts. */
+  funnel?: FunnelCounts,
 ): EntryDecision[] {
   const held = new Set(open.map((p) => p.mint))
   const minRank = VERDICT_RANK[policy.entry.minVerdict]
@@ -96,14 +101,23 @@ export function decideEntries(
   let slots = Math.max(0, policy.maxOpenPositions - open.length)
 
   for (const c of candidates) {
-    if (slots === 0 || budgetSol < policy.perTradeCapSol) break
-    if (held.has(c.mint)) continue
-    if (c.priceUsd === null || c.priceUsd <= 0) continue
-    if (c.liquidityUsd === null || c.liquidityUsd < policy.entry.minLiquidityUsd) continue
-    if (c.createdAt === null) continue
+    if (funnel) funnel.scanned += 1
+    if (slots === 0 || budgetSol < policy.perTradeCapSol) {
+      // Remaining candidates are unexamined, not rejected. Counting them here
+      // rather than breaking keeps the tally honest about why they stopped.
+      if (funnel) funnel.budgetOrSlotsExhausted += 1
+      continue
+    }
+    if (held.has(c.mint)) { if (funnel) funnel.heldAlready += 1; continue }
+    if (c.priceUsd === null || c.priceUsd <= 0) { if (funnel) funnel.noPrice += 1; continue }
+    if (c.liquidityUsd === null || c.liquidityUsd < policy.entry.minLiquidityUsd) {
+      if (funnel) funnel.thinLiquidity += 1
+      continue
+    }
+    if (c.createdAt === null) { if (funnel) funnel.noCreatedAt += 1; continue }
     const ageMin = (now - c.createdAt) / 60_000
-    if (ageMin > policy.entry.maxTokenAgeMinutes) continue
-    if (ageMin < policy.entry.minTokenAgeMinutes) continue
+    if (ageMin > policy.entry.maxTokenAgeMinutes) { if (funnel) funnel.tooOld += 1; continue }
+    if (ageMin < policy.entry.minTokenAgeMinutes) { if (funnel) funnel.tooNew += 1; continue }
 
     // Momentum-exhaustion filter.
     //
@@ -125,20 +139,29 @@ export function decideEntries(
     // first-sight drift check, which answers the same question with better
     // data: not "what did a third party say this did over an hour" but "how
     // far has it moved since WE saw it, in the price we are about to pay".
-    if (c.changeH1 !== null && c.changeH1 > policy.entry.maxChangeH1Pct) continue
+    if (c.changeH1 !== null && c.changeH1 > policy.entry.maxChangeH1Pct) {
+      if (funnel) funnel.parabolic += 1
+      continue
+    }
 
     // Which discovery universes this envelope may buy from. The promotional
     // feed was measured at -$331 realized over 87 closes; launchpad at
     // -$16.67 over 40 with a tail that actually pays.
     // Allowlist, so a discovery source added later cannot spend money by
     // default. "held" is a re-price of an open position, not a discovery.
-    if (c.origin !== "held" && !policy.entry.allowedOrigins.includes(c.origin)) continue
+    if (c.origin !== "held" && !policy.entry.allowedOrigins.includes(c.origin)) {
+      if (funnel) funnel.originNotAllowed += 1
+      continue
+    }
 
     // Our own tape must agree before a listing gets our capital.
-    if (!trajectoryConfirms(trajectories.get(c.mint), policy.entry.minObservedTicks)) continue
+    if (!trajectoryConfirms(trajectories.get(c.mint), policy.entry.minObservedTicks)) {
+      if (funnel) funnel.trajectoryUnconfirmed += 1
+      continue
+    }
 
     const verdict = combineVerdict(evaluateGates(c.snapshot))
-    if (VERDICT_RANK[verdict] < minRank) continue
+    if (VERDICT_RANK[verdict] < minRank) { if (funnel) funnel.verdictTooLow += 1; continue }
 
     // Model gate LAST, behind every safety check, so a refusal here means
     // "would have entered but for the model" — the exact population whose
@@ -147,12 +170,14 @@ export function decideEntries(
     const modelProb = modelProbs?.get(c.mint) ?? null
     if (policy.entry.minModelProb !== null && !passesModelGate(policy.entry.minModelProb, modelProb)) {
       modelRefusals?.push({ mint: c.mint, symbol: c.symbol, prob: modelProb })
+      if (funnel) funnel.modelProbTooLow += 1
       continue
     }
 
     // Clear tokens get full envelope size, caution gets half: the policy's
     // "buy blind small, never blind big" made arithmetic.
     const sizeSol = verdict === "clear" ? policy.perTradeCapSol : policy.perTradeCapSol / 2
+    if (funnel) funnel.admitted += 1
     out.push({ candidate: c, verdict, sizeSol, modelProb })
     budgetSol -= sizeSol
     slots -= 1

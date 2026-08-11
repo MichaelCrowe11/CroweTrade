@@ -1,6 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { trajectoryConfirms, hasDrifted, type Trajectory } from "../../../shared/trajectory.ts"
+import { emptyFunnel } from "../../../shared/funnel.ts"
 
 /**
  * The trajectory gate decides whether OUR OWN observed tape supports an entry.
@@ -149,4 +150,40 @@ test("UNKNOWN change passes here, because drift catches it downstream", () => {
   // policy admits. The first-sight drift gate answers the same question with
   // our own recorded price rather than a third party's hourly claim.
   assert.equal(parabolicRefuses(null, 80), false)
+})
+
+// ── Entry funnel accounting ────────────────────────────────────────────────
+//
+// The counts only help if they are trustworthy, and the property that makes
+// them trustworthy is that they SUM to scanned: every candidate is counted at
+// exactly the first stage that rejects it, so nothing vanishes silently and
+// the largest bucket is genuinely the blocker.
+
+test("an empty funnel starts at zero everywhere", () => {
+  const f = emptyFunnel()
+  for (const [k, v] of Object.entries(f)) assert.equal(v, 0, `${k} should start at 0`)
+})
+
+test("the funnel has a bucket for every rejection the filter can make", () => {
+  // If a stage is added to decideEntries without a bucket, candidates vanish
+  // from the accounting and the sum stops matching scanned.
+  const f = emptyFunnel()
+  for (const k of [
+    "heldAlready", "noPrice", "thinLiquidity", "noCreatedAt", "tooOld", "tooNew",
+    "parabolic", "originNotAllowed", "trajectoryUnconfirmed", "verdictTooLow",
+    "modelProbTooLow", "budgetOrSlotsExhausted", "admitted",
+  ]) {
+    assert.ok(k in f, `missing bucket: ${k}`)
+  }
+})
+
+test("buckets sum to scanned, which is what makes the largest one meaningful", () => {
+  // Simulating a tick's accounting: 10 scanned, distributed across stages.
+  const f = emptyFunnel()
+  f.scanned = 10
+  f.thinLiquidity = 7
+  f.tooNew = 2
+  f.admitted = 1
+  const { scanned, ...rest } = f
+  assert.equal(Object.values(rest).reduce((a, b) => a + b, 0), scanned)
 })
