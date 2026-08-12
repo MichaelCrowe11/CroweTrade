@@ -718,7 +718,20 @@ export class Ledger extends DurableObject<Env> {
     // rather than a marketed slice. Both sources run tagged by origin so the
     // calibration loop decides between them on evidence, not on argument.
     if (solUsd > 0) {
-      const launchpad = await fetchLaunchpadCandidates(solUsd, signal)
+      const launchpadScan = await fetchLaunchpadCandidates(solUsd, signal, {
+        minTokenAgeMinutes: policy.entry.minTokenAgeMinutes,
+        minObservedTicks: policy.entry.minObservedTicks,
+      })
+      const launchpad = launchpadScan.candidates
+      if (!launchpadScan.complete) {
+        console.warn(JSON.stringify({
+          msg: "launchpad discovery did not cover its observation target",
+          pagesAttempted: launchpadScan.pagesAttempted,
+          failedOffsets: launchpadScan.failedOffsets,
+          targetHistoryMs: launchpadScan.targetHistoryMs,
+          coveredHistoryMs: launchpadScan.coveredHistoryMs,
+        }))
+      }
       const seen = new Set(candidates.map((c) => c.mint))
       for (const c of launchpad) {
         if (!seen.has(c.mint)) candidates.push(c)

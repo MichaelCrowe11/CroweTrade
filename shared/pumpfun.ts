@@ -119,58 +119,121 @@ function toCandidate(c: PumpCoin, solUsd: number, now: number): Candidate | null
   }
 }
 
+/** The API caps a page at roughly 70; depth comes from pagination. */
+const PAGE_SIZE = 70
+/** Bound external work even if mint velocity spikes or timestamps are bad. */
+const MAX_PAGES = 8
+const DEFAULT_POLL_INTERVAL_MS = 60_000
+
+export interface LaunchpadScanRequirements {
+  minTokenAgeMinutes: number
+  minObservedTicks: number
+  pollIntervalMs?: number
+  maxPages?: number
+}
+
+export interface LaunchpadScanResult {
+  candidates: Candidate[]
+  /** False means a failed page or the request budget ended before the target. */
+  complete: boolean
+  pagesAttempted: number
+  failedOffsets: number[]
+  targetHistoryMs: number
+  coveredHistoryMs: number
+}
+
 /**
- * Newest launches, newest first, across several pages.
+ * History required for a mint to be both old enough and observed often enough.
  *
- * Depth is the whole point. The engine cannot enter a token it has not
- * observed for three minutes, and a single page keeps a mint visible for
- * roughly one -- so shallow polling did not filter the universe, it made
- * almost all of it unreachable.
+ * One extra poll interval matters. A mint created just after a scan is first
+ * seen almost one interval old; if discovery ends exactly at the age floor,
+ * its last visible observation can still be just too young to enter.
  */
-/** The API caps a page at ~70 regardless of what `limit` asks for, so depth
- *  comes from pagination rather than a bigger page. Measured 2026-08-11:
- *  offset 0 reaches ~3.7 minutes back, 70 reaches ~6.9, 140 reaches ~9.9. */
-const PAGE = 70
-const PAGES = 3
+export function requiredLaunchpadHistoryMs(
+  requirements: LaunchpadScanRequirements,
+): number {
+  const pollIntervalMs = Math.max(1, requirements.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS)
+  const minAgeMs = Math.max(0, requirements.minTokenAgeMinutes) * 60_000
+  const observedTicksMs = Math.max(1, Math.ceil(requirements.minObservedTicks)) * pollIntervalMs
+  return Math.max(minAgeMs + pollIntervalMs, observedTicksMs)
+}
+
+/**
+ * Newest launches, newest first, deep enough to satisfy the engine's current
+ * observation rules. Page count is deliberately NOT the success criterion:
+ * mint velocity changes, while the required time horizon does not.
+ */
 
 export async function fetchLaunchpadCandidates(
   solUsd: number,
   signal: AbortSignal,
-  pages = PAGES,
-): Promise<Candidate[]> {
+  requirements: LaunchpadScanRequirements,
+): Promise<LaunchpadScanResult> {
   const now = Date.now()
+  const targetHistoryMs = requiredLaunchpadHistoryMs(requirements)
+  const targetCreatedAt = now - targetHistoryMs
+  const requestedMaxPages = requirements.maxPages ?? MAX_PAGES
+  const maxPages = Number.isFinite(requestedMaxPages)
+    ? Math.max(1, Math.min(MAX_PAGES, Math.floor(requestedMaxPages)))
+    : MAX_PAGES
   const seen = new Set<string>()
   const out: Candidate[] = []
+  const failedOffsets: number[] = []
+  let pagesAttempted = 0
+  let oldestCreatedAt: number | null = null
+  let reachedTarget = false
 
-  // Sequential pages, each failure isolated. ONE page is worth ~1 minute of
-  // visibility and the engine's own rules require a token to be 3 minutes old
-  // with 3 observed ticks before it may be entered -- so a single page made
-  // 96.2% of the universe structurally unenterable: mints fell off the listing
-  // before they were ever eligible. Measured: average visible span 1 minute,
-  // average 2 observations, only 3.8% visible for 3 minutes.
-  for (let i = 0; i < pages; i++) {
+  for (let page = 0; page < maxPages; page++) {
+    const offset = page * PAGE_SIZE
+    pagesAttempted += 1
     try {
       const url =
-        `${LISTING}?offset=${i * PAGE}&limit=${PAGE}&sort=created_timestamp&order=DESC&includeNsfw=false`
+        `${LISTING}?offset=${offset}&limit=${PAGE_SIZE}&sort=created_timestamp&order=DESC&includeNsfw=false`
       const res = await fetch(url, {
         signal,
         headers: { accept: "application/json", "user-agent": "CroweTrade/1.0" },
       })
-      if (!res.ok) continue
-      const body = (await res.json()) as PumpCoin[]
-      if (!Array.isArray(body)) continue
+      if (!res.ok) {
+        failedOffsets.push(offset)
+        continue
+      }
+      const body = await res.json()
+      if (!Array.isArray(body) || body.length === 0) {
+        failedOffsets.push(offset)
+        break
+      }
       for (const raw of body) {
+        const createdAt = Number((raw as PumpCoin)?.created_timestamp)
+        if (Number.isFinite(createdAt) && createdAt > 0 && createdAt <= now) {
+          oldestCreatedAt = oldestCreatedAt === null
+            ? createdAt
+            : Math.min(oldestCreatedAt, createdAt)
+        }
         // Pages can overlap as new mints shift the window mid-fetch; first
         // sighting wins so a token is never counted twice in one tick.
-        if (!raw?.mint || seen.has(raw.mint)) continue
-        seen.add(raw.mint)
-        const c = toCandidate(raw, solUsd, now)
+        const coin = raw as PumpCoin
+        if (!coin?.mint || seen.has(coin.mint)) continue
+        seen.add(coin.mint)
+        const c = toCandidate(coin, solUsd, now)
         if (c !== null) out.push(c)
       }
-    } catch {
-      // A failed page costs depth, never the tick. The promotional source and
-      // position management continue regardless.
+      if (oldestCreatedAt !== null && oldestCreatedAt <= targetCreatedAt) {
+        reachedTarget = true
+        break
+      }
+    } catch (error) {
+      // A tick-wide abort is control flow, not a page failure; do not swallow it.
+      if (signal.aborted) throw error
+      failedOffsets.push(offset)
     }
   }
-  return out
+
+  return {
+    candidates: out,
+    complete: reachedTarget && failedOffsets.length === 0,
+    pagesAttempted,
+    failedOffsets,
+    targetHistoryMs,
+    coveredHistoryMs: oldestCreatedAt === null ? 0 : Math.max(0, now - oldestCreatedAt),
+  }
 }
