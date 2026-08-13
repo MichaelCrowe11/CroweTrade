@@ -191,3 +191,63 @@ test("summing preserves the property that buckets sum to scanned", () => {
     .reduce((n, k) => n + w.counts[k], 0)
   assert.equal(stages, w.counts.scanned)
 })
+
+/**
+ * A tick where the entry stage never ran.
+ *
+ * Added 2026-08-13 after the ring went dark for an hour while the breaker was
+ * cooling. Both writeFunnelRow calls sat inside `if (!killed && !breakerOpen
+ * && !expired)`, so the window returned null — which reads identically to a
+ * freshly deployed policy whose first tick has not landed. Two very different
+ * situations, one indistinguishable symptom, during exactly the state the
+ * funnel exists to explain.
+ */
+test("a blocked tick keeps the sum-to-scanned invariant", () => {
+  // The invariant is what makes "largest bucket is the answer" true. A
+  // blocked tick examined nobody, so the whole scan belongs to one bucket
+  // rather than being silently dropped.
+  const w = summarizeFunnelRing([
+    entry(1, "p", { scanned: 251, blockedBreaker: 251 }),
+  ], "p")!
+  const stages = FUNNEL_KEYS.filter((k) => k !== "scanned")
+    .reduce((n, k) => n + w.counts[k], 0)
+  assert.equal(stages, w.counts.scanned)
+  assert.equal(w.counts.blockedBreaker, 251)
+  assert.equal(w.counts.admitted, 0)
+})
+
+test("the three blocked reasons stay distinct", () => {
+  // They need opposite responses: un-kill, redeploy, or wait. A single
+  // "blocked" bucket would have made the breaker look like an outage.
+  const w = summarizeFunnelRing([
+    entry(1, "p", { scanned: 10, blockedBreaker: 10 }),
+    entry(2, "p", { scanned: 20, blockedKilled: 20 }),
+    entry(3, "p", { scanned: 30, blockedExpired: 30 }),
+  ], "p")!
+  assert.equal(w.counts.blockedBreaker, 10)
+  assert.equal(w.counts.blockedKilled, 20)
+  assert.equal(w.counts.blockedExpired, 30)
+  assert.equal(w.counts.scanned, 60)
+})
+
+test("rows packed before the blocked stages existed read as zero", () => {
+  // The 120 rows already in the live ring were packed at 14 wide. Appending
+  // must not relabel them: an old row's `admitted` must stay `admitted`.
+  const old = [246, 0, 2, 202, 0, 15, 0, 0, 0, 21, 3, 0, 0, 3]
+  const out = unpackFunnel(old)
+  assert.equal(out.scanned, 246)
+  assert.equal(out.admitted, 3)
+  assert.equal(out.blockedKilled, 0)
+  assert.equal(out.blockedExpired, 0)
+  assert.equal(out.blockedBreaker, 0)
+})
+
+test("a blocked tick carries no execution half", () => {
+  // Nothing was admitted, so claiming a zeroed exec funnel would assert the
+  // entry loop ran and admitted nobody. It never ran at all.
+  const w = summarizeFunnelRing([
+    entry(1, "p", { scanned: 8, blockedBreaker: 8 }),
+  ], "p")!
+  assert.equal(w.exec, null)
+  assert.equal(w.execUnmeasuredTicks, 1)
+})

@@ -31,6 +31,23 @@ export interface FunnelCounts {
   modelProbTooLow: number
   budgetOrSlotsExhausted: number
   admitted: number
+  /**
+   * The three ways the entry stage never RAN at all.
+   *
+   * Every bucket above describes a candidate examined and refused inside
+   * decideEntries. These describe a tick where decideEntries was never
+   * called, because the engine was killed, the envelope had expired, or the
+   * breaker was cooling down. They carry the whole scan, so the buckets still
+   * sum to `scanned` and the largest one is still the answer.
+   *
+   * Split three ways rather than one "blocked" because they need opposite
+   * responses: a kill is an operator waiting to un-kill, an expiry needs a
+   * fresh envelope deployed, and a cooling breaker needs nothing but time.
+   * Collapsing them would rebuild the ambiguity this file exists to remove.
+   */
+  blockedKilled: number
+  blockedExpired: number
+  blockedBreaker: number
 }
 
 export function emptyFunnel(): FunnelCounts {
@@ -39,6 +56,7 @@ export function emptyFunnel(): FunnelCounts {
     tooOld: 0, tooNew: 0, parabolic: 0, originNotAllowed: 0,
     trajectoryUnconfirmed: 0, verdictTooLow: 0, modelProbTooLow: 0,
     budgetOrSlotsExhausted: 0, admitted: 0,
+    blockedKilled: 0, blockedExpired: 0, blockedBreaker: 0,
   }
 }
 
@@ -53,6 +71,9 @@ export const FUNNEL_KEYS = [
   "tooOld", "tooNew", "parabolic", "originNotAllowed",
   "trajectoryUnconfirmed", "verdictTooLow", "modelProbTooLow",
   "budgetOrSlotsExhausted", "admitted",
+  // Appended 2026-08-13, AFTER `admitted`, so the 120 rows already in the ring
+  // keep their meaning and read as zero here rather than shifting a stage.
+  "blockedKilled", "blockedExpired", "blockedBreaker",
 ] as const satisfies readonly (keyof FunnelCounts)[]
 
 export function packFunnel(f: FunnelCounts): number[] {

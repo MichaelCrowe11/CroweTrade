@@ -1405,6 +1405,36 @@ export class Ledger extends DurableObject<Env> {
       // that reaches here completes the pair; one that dies leaves the
       // selection half standing, which is the point.
       this.writeFunnelRow(now, funnel, exec)
+    } else {
+      // THE ENTRY STAGE NEVER RAN. Record that, rather than nothing.
+      //
+      // Both writeFunnelRow calls live inside the branch above, so for the
+      // whole time the engine is killed, expired or cooling down, the ring
+      // recorded no rows at all and `entryFunnelWindow` returned null.
+      //
+      // Null is indistinguishable from a freshly deployed policy whose first
+      // tick has not landed. Measured 2026-08-13: the breaker tripped at
+      // 19:29:34Z, a deploy flipped the policy hash fifteen minutes later, and
+      // the window read empty for both reasons at once with no way to tell
+      // them apart. It cost the better part of an hour to separate "no entries
+      // because the breaker is open" from "no entries because the engine is
+      // broken" — which is precisely the question this instrument was built to
+      // answer, going dark in exactly the state that raises it.
+      //
+      // This is the same mistake as writing the ring row only after the entry
+      // loop, one level of nesting further out: the instrument was silent for
+      // the ticks that most needed instrumenting.
+      const blocked = emptyFunnel()
+      blocked.scanned = candidates.length
+      // Exclusive and priority-ordered, like every other bucket: a killed
+      // engine is killed whatever the breaker is doing.
+      const bucket = killed
+        ? "blockedKilled"
+        : expired
+          ? "blockedExpired"
+          : "blockedBreaker"
+      blocked[bucket] = candidates.length
+      this.writeFunnelRow(now, blocked, null)
     }
 
     // SILENT STALL. The absence of events is itself an event, and this
