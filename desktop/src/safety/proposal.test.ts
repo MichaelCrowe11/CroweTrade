@@ -92,16 +92,42 @@ test("lowering a CAP tightens; raising it loosens", () => {
   assert.equal(validateProposal(PAPER_POLICY, [{ path: "dailyCapSol", to: 99 }]).changes[0]?.tightens, false)
 })
 
+// Pinned rather than read from PAPER_POLICY: this asserts a DIRECTION, and
+// coupling it to a live constant meant disarming the model gate broke a test
+// about arithmetic. The running value is a separate question from whether
+// higher means stricter.
+const ARMED = { ...PAPER_POLICY, entry: { ...PAPER_POLICY.entry, minModelProb: 0.2 } }
+const DISARMED = { ...PAPER_POLICY, entry: { ...PAPER_POLICY.entry, minModelProb: null } }
+
 test("raising a FLOOR tightens, which is the opposite direction", () => {
   // The case a naive "lower is safer" rule gets wrong.
   assert.equal(
-    validateProposal(PAPER_POLICY, [{ path: "entry.minModelProb", to: 0.4 }]).changes[0]?.tightens,
+    validateProposal(ARMED, [{ path: "entry.minModelProb", to: 0.4 }]).changes[0]?.tightens,
     true,
   )
   assert.equal(
-    validateProposal(PAPER_POLICY, [{ path: "entry.minModelProb", to: 0.05 }]).changes[0]?.tightens,
+    validateProposal(ARMED, [{ path: "entry.minModelProb", to: 0.05 }]).changes[0]?.tightens,
     false,
   )
+})
+
+test("arming a disarmed gate tightens; disarming an armed one loosens", () => {
+  // The change here is the EXISTENCE of a refusal, not its level, so the
+  // direction cannot come from comparing two numbers.
+  assert.equal(
+    validateProposal(DISARMED, [{ path: "entry.minModelProb", to: 0.2 }]).changes[0]?.tightens,
+    true,
+  )
+  assert.equal(
+    validateProposal(ARMED, [{ path: "entry.minModelProb", to: null }]).changes[0]?.tightens,
+    false,
+  )
+})
+
+test("disarming a gate that is already off is a noop, not a loosening", () => {
+  const r = validateProposal(DISARMED, [{ path: "entry.minModelProb", to: null }])
+  assert.equal(r.changes[0]?.noop, true)
+  assert.equal(r.entirelyNoop, true)
 })
 
 test("removing a discovery source tightens; adding one loosens", () => {

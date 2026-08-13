@@ -230,17 +230,6 @@ export const PAPER_POLICY: PolicyEnvelope = {
     allowedOrigins: ["launchpad"],
     minObservedTicks: 3,
     /**
-     * Armed 2026-08-09. The exit sweep closed the other door: the shipped
-     * exit rule beat every alternative including no-stop, so entry selection
-     * is the only lever left, and the unfiltered baseline is a measured
-     * money-loser (52 closes, -$103.79 at arming time). 0.2 selects the
-     * reliability bucket that observed a ~24% hit rate against a 5.8% base —
-     * the first measured selection power this system has produced. Entries
-     * will be far rarer on purpose; this cohort tests quality over volume
-     * against the baseline cohort's record, the same head-to-head shape as
-     * launchpad vs promotional.
-     */
-    /**
      * 30% is a deliberate first guess, not a fitted value, and it should be
      * revisited once the cohort has trades. The measured average run was
      * +142.8%, so this refuses the bulk of what was being bought while still
@@ -249,7 +238,41 @@ export const PAPER_POLICY: PolicyEnvelope = {
      * given the engine only enters after observing a token.
      */
     maxDriftSinceFirstSightPct: 30,
-    minModelProb: 0.2,
+    /**
+     * DISARMED 2026-08-11. Was 0.2, armed 2026-08-09 on a genuine result: the
+     * fit selected a reliability bucket observing ~24% against a 5.8% base,
+     * the first measured selection power this system produced.
+     *
+     * It was then measured refusing 100% of what reached it. Over 17 ticks and
+     * 3,947 scanned candidates, the entry funnel read: 3,590 thin liquidity,
+     * 151 too old, 65 wrong origin, 55 too new, 48 no price, 8 parabolic, 7
+     * trajectory unconfirmed, 0 verdict too low, and 23 refused HERE. Admitted
+     * zero. Every candidate that survived all seven earlier gates died at this
+     * one, and the engine had entered nothing since 2026-08-10 17:58 UTC.
+     *
+     * A gate refusing 23 of 23 is not evidence the gate is wrong. It may be
+     * reading a genuinely worthless universe correctly. But the arming
+     * argument was a head-to-head against an unfiltered baseline, and the
+     * allowlist switched the venue to launchpad-only underneath it: the fit
+     * saw a 5.8% base rate on a corpus that was mostly promotional, and
+     * nothing has ever tested its calibration on the venue it now scores
+     * exclusively. That test cannot run while the gate refuses the entire
+     * sample it would be judged on.
+     *
+     * So the model becomes an OBSERVER, not a gate. `modelFingerprint` stays
+     * set deliberately: probabilities are still computed, still written to
+     * `decisions.model_prob` for entered and refused alike, and still shipped
+     * on every `entry` event and PostHog `paper_entry`. When this cohort has
+     * closes, splitting them at 0.2 answers what arming could only assume —
+     * whether the trades this gate was refusing lose more than the ones it
+     * allowed. Re-arm on that number, not on the fit's own held-out AUC.
+     *
+     * NOTE for whoever changes this next: `null` is the disarm, NOT `0`.
+     * `passesModelGate` reads `prob !== null && prob >= minProb`, so a 0 would
+     * still refuse every candidate whose probability could not be computed.
+     * Zero looks like off and is really "off, but the model must still speak".
+     */
+    minModelProb: null,
     modelFingerprint: "m20260809-5743r-auc802",
   },
   breaker: {

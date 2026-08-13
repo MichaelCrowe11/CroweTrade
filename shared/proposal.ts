@@ -47,6 +47,11 @@ export const PROPOSABLE = [
 
 export type ProposablePath = (typeof PROPOSABLE)[number]
 
+/** Paths where `null` is a legitimate value meaning "gate not applied".
+ *  Listed explicitly rather than inferred: accepting null for `dailyCapSol`
+ *  would read as "no daily cap", which is the opposite of a safe default. */
+export const NULLABLE = ["entry.minModelProb"] as const
+
 export interface ProposedChange {
   path: string
   /** The value the agent wants. */
@@ -136,9 +141,19 @@ function tightensBy(path: string, from: unknown, to: unknown): boolean | null {
     if (from === "clear" && to === "caution") return false
     return null
   }
-  if (typeof from !== "number" || typeof to !== "number") return null
   const lowerTighter = LOWER_IS_TIGHTER[path]
   if (lowerTighter === undefined) return null
+  // A nullable gate, where null means the gate is not applied at all.
+  // Arming one always TIGHTENS and disarming always LOOSENS, whichever way
+  // the number itself runs, because the change is the existence of a refusal
+  // rather than its level. Without this, disarming a gate also disarms the
+  // governance label on re-arming it: `tightensBy` fell through the
+  // number check and returned null, and an operator reviewing the proposal
+  // to turn the gate back on would be shown "unclassified" for the one
+  // change the tighten-instant rule most obviously covers.
+  if (from === null && typeof to === "number") return true
+  if (typeof from === "number" && to === null) return false
+  if (typeof from !== "number" || typeof to !== "number") return null
   return lowerTighter ? to < from : to > from
 }
 
@@ -179,9 +194,19 @@ export function validateProposal(
     }
     // Type must match. An agent proposing a string for a numeric cap is a
     // malformed proposal, not a policy question.
+    //
+    // Except for gates that are genuinely nullable, where null is a VALUE
+    // meaning "not applied" rather than a missing one. The check used to
+    // accept null -> number but refuse number -> null, so the model gate could
+    // be proposed armed and never proposed disarmed. Found 2026-08-11 while
+    // disarming it by hand: the Analyst could not have proposed the change
+    // the operator was making, and would have reported a type error rather
+    // than a policy disagreement.
     const sameType = Array.isArray(from)
       ? Array.isArray(c.to)
-      : typeof from === typeof c.to || (from === null && c.to !== undefined)
+      : typeof from === typeof c.to
+        || (from === null && c.to !== undefined)
+        || (c.to === null && (NULLABLE as readonly string[]).includes(c.path))
     if (!sameType) {
       errors.push(`${c.path} expects ${Array.isArray(from) ? "an array" : typeof from}`)
       continue

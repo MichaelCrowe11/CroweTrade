@@ -38,6 +38,11 @@ import {
   type ModelRefusal,
   emptyFunnel,
 } from "./strategy.js"
+import {
+  packFunnel, packExecFunnel, emptyExecFunnel, upsertFunnelRow,
+  summarizeFunnelRing,
+  type FunnelRingEntry, type FunnelCounts, type ExecFunnelCounts,
+} from "../../shared/funnel.js"
 import { computeFeatures } from "../../shared/features.js"
 import { hasDrifted } from "../../shared/trajectory.js"
 import { validateProposal } from "../../shared/proposal.js"
@@ -63,6 +68,14 @@ import {
 const STALL_HOURS = 2
 
 const SLIPPAGE_BPS = 300
+
+/** How long after its snapshot a decision is scored. Also the point past
+ *  which following a token up buys nothing, since the label is already due. */
+const LABEL_HORIZON_MS = 30 * 60_000
+/** Extra observation window so a labeler running behind does not lose the
+ *  ticks it is about to need. Deliberately small: this is the term that
+ *  reintroduces unbounded follow-up if it grows. */
+const LABEL_HORIZON_SLACK_MS = 10 * 60_000
 
 interface PositionRow {
   [key: string]: string | number | null
@@ -241,6 +254,19 @@ export class Ledger extends DurableObject<Env> {
       } catch {
         // Column already present.
       }
+      // Retention needs `at` on its own. idx_ticks_mint_at is on (mint, at),
+      // which serves the per-mint trajectory reads but cannot answer
+      // `WHERE at < ?`, so the 48-hour prune full-scanned the table.
+      //
+      // Built 2026-08-12 against 3.88M existing rows. That one-time build is
+      // a full pass and it runs on Durable Object INIT, which is a real risk
+      // on a large table: reads returned intermittent 500s while it ran. It
+      // COMPLETED, and on any fresh object the table is empty and the build
+      // is free, so this stays. Do not read a burst of resets around a deploy
+      // that adds an index as proof the index cannot be built — check
+      // sqlite_master before rolling it back, which is the check that
+      // corrected exactly that wrong call here.
+      sql.exec("CREATE INDEX IF NOT EXISTS idx_ticks_at ON ticks (at)")
       // Agent policy proposals. Inert records: the engine never reads this
       // table to decide anything, it exists so a human can review what an
       // agent suggested and why.
@@ -761,8 +787,34 @@ export class Ledger extends DurableObject<Env> {
     // "died" by absence rather than by dying. That would kill the control
     // group on a technicality and make entered-vs-refused look decisive while
     // measuring nothing but which cohort we bothered to watch.
+    // BOUNDED BY THE LABEL HORIZON, not by the backlog.
+    //
+    // This was every unlabeled decision, unbounded, and it is what took the
+    // engine down on 2026-08-12. The backlog had reached 11,172 mints, and
+    // each tick then asked DexScreener for all of them (30 per request, so
+    // ~370 subrequests), inserted a tick row for every one that answered
+    // (~11k INSERTs into a 4.5M-row table), and put the whole set through an
+    // RPC batch. Every real tick burned 30-50s and died on the Durable Object
+    // CPU limit; only lease-skipped ticks returned.
+    //
+    // It degraded as a SPIRAL, which is why it looked gradual: a tick that
+    // dies labels nothing, the backlog grows, the next tick is more expensive,
+    // fewer ticks complete. Cost scaled with the thing the cost prevented us
+    // from draining.
+    //
+    // The horizon is the principled bound. A decision is scored 30 minutes
+    // after its snapshot, so observing it past that buys nothing — anything
+    // older is due for labeling, not for another tick. Slack covers the case
+    // where the labeler is running behind. Open positions are always followed
+    // up regardless of age, because we own them.
+    //
+    // This does NOT reintroduce the control-group bias the external audit
+    // caught. Refused tokens are still observed for their entire scoring
+    // window; they simply stop being observed once there is nothing left to
+    // observe them FOR.
     const pendingLabel = this.sql().exec<{ mint: string }>(
-      "SELECT mint FROM decisions WHERE labeled = 0 AND voided = 0",
+      "SELECT mint FROM decisions WHERE labeled = 0 AND voided = 0 AND at > ?",
+      now - (LABEL_HORIZON_MS + LABEL_HORIZON_SLACK_MS),
     ).toArray().map((r) => r.mint)
 
     const inScan = new Set(candidates.map((c) => c.mint))
@@ -831,7 +883,24 @@ export class Ledger extends DurableObject<Env> {
         c.mint, now, c.priceUsd, c.liquidityUsd, c.buys24h, c.sells24h, c.origin,
       )
     }
-    this.sql().exec("DELETE FROM ticks WHERE at < ?", now - 48 * 3_600_000)
+    // Retention, hourly rather than every tick.
+    //
+    // `idx_ticks_mint_at` is on (mint, at) and CANNOT serve a predicate on
+    // `at` alone, so this DELETE full-scanned the table. Measured 2026-08-12
+    // at 3.88M rows: ~0.6s of CPU burned every single tick to delete usually
+    // nothing, growing with the corpus. The engine was resetting on the
+    // Durable Object CPU limit, and the lease it never released then made the
+    // next several cron minutes skip.
+    //
+    // Two fixes, both needed. `idx_ticks_at` in the migration block makes this
+    // a range scan. The hourly gate makes it rare: 48-hour retention does not
+    // need minute resolution, and a prune that runs 60x more often than the
+    // data ages is pure overhead.
+    const lastPrune = Number(this.metaGet("ticks_pruned_at") ?? "0")
+    if (now - lastPrune > 3_600_000) {
+      this.sql().exec("DELETE FROM ticks WHERE at < ?", now - 48 * 3_600_000)
+      this.metaSet("ticks_pruned_at", String(now))
+    }
 
     // ── The calibration loop, half one: decision snapshots. ────────────────
     // One row per mint, taken the FIRST time we have enough of our own ticks
@@ -886,9 +955,14 @@ export class Ledger extends DurableObject<Env> {
     // from our own subsequent ticks. Every labeled row is one training example
     // for the calibrated edge model: features at decision time, then what the
     // market actually did. This is the dataset "crack the algorithm" needs.
+    // LIMIT raised 20 -> 400. Labeling is pure local SQL with one indexed read
+    // per row and no network at all, so it was never the expensive half of the
+    // tick — but at 20 per tick it could not keep up with launchpad discovery,
+    // and the unlabeled backlog it left behind was what made the FOLLOW-UP
+    // half unbounded. Draining fast is now load-bearing, not just tidy.
     const toLabel = this.sql().exec<{ mint: string; price: number | null; features: string; eligible: number; entered: number }>(
-      "SELECT mint, price, features, eligible, entered FROM decisions WHERE labeled = 0 AND voided = 0 AND at <= ? LIMIT 20",
-      now - 30 * 60_000,
+      "SELECT mint, price, features, eligible, entered FROM decisions WHERE labeled = 0 AND voided = 0 AND at <= ? ORDER BY at ASC LIMIT 400",
+      now - LABEL_HORIZON_MS,
     ).toArray()
     for (const d of toLabel) {
       const latest = this.sql().exec<{ at: number; price: number | null; liquidity_usd: number | null }>(
@@ -1077,8 +1151,17 @@ export class Ledger extends DurableObject<Env> {
       // Armed-model probabilities, from the same six-tick window the decision
       // snapshot uses. A candidate without enough of our own tape gets null,
       // and null does not pass an armed gate — unknown is never a pass.
+      //
+      // Keyed off the FINGERPRINT, not the gate. These were computed only when
+      // `minModelProb` was non-null, so disarming the gate would also have
+      // silenced the model — and the entire reason for disarming it on
+      // 2026-08-11 was to record what it WOULD have refused and check that
+      // against realized P&L. A gate that goes quiet when you stop obeying it
+      // can never be evaluated. The fingerprint is the right switch: it
+      // already means "these exact weights are in play", and it already rolls
+      // the policy hash when the model changes.
       const modelProbs = new Map<string, number | null>()
-      if (policy.entry.minModelProb !== null) {
+      if (policy.entry.modelFingerprint !== null) {
         for (const c of candidates) {
           const rows = this.sql().exec<{
             price: number | null; liquidity_usd: number | null
@@ -1105,10 +1188,28 @@ export class Ledger extends DurableObject<Env> {
       const funnel = emptyFunnel()
       const entries = decideEntries(candidates, this.openPositions(), spentToday, solUsd, policy, now, trajectories, modelProbs, modelRefusals, funnel)
       // Persisted every tick, overwriting: this answers "why did nothing
-      // happen JUST NOW", and a history of funnels would be noise. Three
-      // blockers hid in this chain in one evening, each found only by
-      // instrumenting it by hand afterwards.
+      // happen JUST NOW". Three blockers hid in this chain in one evening,
+      // each found only by instrumenting it by hand afterwards.
       this.metaSet("funnel", JSON.stringify({ at: now, ...funnel }))
+      // The post-admission chain, filled by the entry loop below.
+      const exec = emptyExecFunnel()
+      exec.admitted = entries.length
+
+      // SELECTION HALF, WRITTEN NOW — before the entry loop can die.
+      //
+      // The first version of this wrote one row after the loop, so both
+      // halves came from the same tick by construction. That was the wrong
+      // trade and it cost a diagnosis: the engine is currently resetting
+      // partway through the entry loop, and a ring that only records
+      // completed ticks went silent for exactly the ticks that were failing.
+      // It sat frozen at 73 rows for seventeen minutes while ticks were
+      // demonstrably still starting and inserting into `ticks`.
+      //
+      // So write the selection counts here, then attach the execution counts
+      // to this same row after the loop. A tick that dies still leaves its
+      // selection half, which is the half that survives to be read. The join
+      // between them stays exact because `at` identifies the row.
+      this.writeFunnelRow(now, funnel, null)
       // A few named examples plus a count: enough to see WHO the model is
       // refusing and how often, without an event per refusal flooding the log.
       for (const r of modelRefusals.slice(0, 5)) {
@@ -1125,7 +1226,9 @@ export class Ledger extends DurableObject<Env> {
       }
       for (const e of entries) {
         const c = e.candidate
-        if (c.priceUsd === null || c.liquidityUsd === null) continue
+        // Was a bare `continue`: a candidate whose price or liquidity had gone
+        // null since the scan vanished without an event or a count.
+        if (c.priceUsd === null || c.liquidityUsd === null) { exec.missingPrice += 1; continue }
 
         // Price the entry off a REAL route. No route means no entry: a token we
         // cannot buy through Jupiter is one we could not have bought at all,
@@ -1134,6 +1237,7 @@ export class Ledger extends DurableObject<Env> {
         const decimals = Number(this.metaGet(`decimals:${c.mint}`) ?? "6")
         const q = await quoteBuy(c.mint, e.sizeSol, SLIPPAGE_BPS)
         if (!q) {
+          exec.noRoute += 1
           this.event("entry_skipped", { symbol: c.symbol, mint: c.mint, reason: "no route" })
           continue
         }
@@ -1142,6 +1246,7 @@ export class Ledger extends DurableObject<Env> {
         // v1's stop-outs concentrated in exactly the pools this refuses.
         const impactPct = q.priceImpactPct * 100
         if (impactPct > policy.entry.maxEntryImpactPct) {
+          exec.impactAboveHurdle += 1
           this.event("entry_skipped", {
             symbol: c.symbol, mint: c.mint, reason: "impact above cost hurdle",
             impactPct: Number(impactPct.toFixed(2)),
@@ -1159,6 +1264,7 @@ export class Ledger extends DurableObject<Env> {
         ).toArray()[0]?.price ?? null
         const impliedEntry = (e.sizeSol * solUsd) / (Number(q.outAmount) / 10 ** decimals)
         if (hasDrifted(firstSight, impliedEntry, policy.entry.maxDriftSinceFirstSightPct)) {
+          exec.drifted += 1
           const runPct = firstSight && firstSight > 0
             ? ((impliedEntry - firstSight) / firstSight) * 100 : null
           this.event("entry_skipped", {
@@ -1173,6 +1279,7 @@ export class Ledger extends DurableObject<Env> {
         // would have paid fees to fail at.
         const sim = await dryRunSwap(q.raw)
         if (!sim.ok) {
+          exec.simulationFailed += 1
           this.event("entry_skipped", {
             symbol: c.symbol, mint: c.mint, reason: "simulation failed", error: sim.error,
           })
@@ -1206,6 +1313,7 @@ export class Ledger extends DurableObject<Env> {
           const key = this.env.TRADING_KEYPAIR as string
           const balance = await walletBalanceSol(owner ?? "")
           if (!owner || balance === null) {
+            exec.walletUnreadable += 1
             this.event("entry_skipped", { symbol: c.symbol, mint: c.mint, reason: "wallet unreadable" })
             continue
           }
@@ -1224,6 +1332,7 @@ export class Ledger extends DurableObject<Env> {
             },
           })
           if (!result.ok || !result.fill) {
+            exec.liveRefused += 1
             this.event("entry_skipped", {
               symbol: c.symbol, mint: c.mint, reason: "live entry refused",
               error: result.error, signature: result.signature, paidFee: !result.refusedBeforeSend,
@@ -1240,6 +1349,7 @@ export class Ledger extends DurableObject<Env> {
             // Confirmed, but no tokens arrived. Something is wrong that this
             // code cannot reason about, so it records the event and does NOT
             // write a position it would then try to sell.
+            exec.noTokens += 1
             this.event("entry_skipped", {
               symbol: c.symbol, mint: c.mint, reason: "live fill delivered no tokens",
               signature: entrySig,
@@ -1253,7 +1363,9 @@ export class Ledger extends DurableObject<Env> {
           })
         }
 
-        if (tokenAmount <= 0) continue
+        // Also a bare `continue` until now: a quote that resolved to zero
+        // tokens left no trace at all on the paper path.
+        if (tokenAmount <= 0) { exec.noTokens += 1; continue }
         const entryPrice = sizeUsd / tokenAmount
         const id = crypto.randomUUID()
         this.sql().exec(
@@ -1287,7 +1399,12 @@ export class Ledger extends DurableObject<Env> {
         spentRunning += e.sizeSol
         this.metaSet(`spend:${day}`, String(spentRunning))
         entered += 1
+        exec.entered += 1
       }
+      // EXECUTION HALF, attached to the row written before the loop. A tick
+      // that reaches here completes the pair; one that dies leaves the
+      // selection half standing, which is the point.
+      this.writeFunnelRow(now, funnel, exec)
     }
 
     // SILENT STALL. The absence of events is itself an event, and this
@@ -1496,6 +1613,32 @@ export class Ledger extends DurableObject<Env> {
       budget,
       byOrigin,
       skipReasons,
+      // Where candidates died inside decideEntries on the most recent tick.
+      // Buckets sum to `scanned`, so the largest one is the current blocker.
+      entryFunnel: (() => {
+        const raw = this.metaGet("funnel")
+        if (!raw) return null
+        try {
+          return JSON.parse(raw) as unknown
+        } catch {
+          return null
+        }
+      })(),
+      // The same chain summed over the last 120 ticks under THIS policy.
+      // Read this one, not `entryFunnel`, for any stage below the dominant
+      // bucket: those see one or two candidates a tick and a single sample
+      // there is indistinguishable from an empty one.
+      entryFunnelWindow: (() => {
+        const raw = this.metaGet("funnel_ring")
+        if (!raw) return null
+        try {
+          const parsed: unknown = JSON.parse(raw)
+          if (!Array.isArray(parsed)) return null
+          return summarizeFunnelRing(parsed as FunnelRingEntry[], this.metaGet("policy_hash") ?? "")
+        } catch {
+          return null
+        }
+      })(),
       calibration: {
         decisions: cal.decisions,
         labeled: cal.labeled ?? 0,
@@ -1609,6 +1752,39 @@ export class Ledger extends DurableObject<Env> {
    * skew, the failure mode that is silent until the live record diverges
    * from every backtest.
    */
+  /**
+   * Upsert this tick's row in the funnel ring, by `at`.
+   *
+   * Called twice per tick: once before the entry loop with the selection
+   * counts and `exec` null, once after with both. The second call replaces
+   * the first rather than appending, so a completed tick leaves one row and a
+   * tick that dies in the loop still leaves its selection half.
+   *
+   * Accumulated at all because the per-tick view has a resolution floor: the
+   * dominant selection bucket is trustworthy at n=1, but every stage below it
+   * sees one or two candidates a tick and the execution stages see fewer
+   * still. A single funnel cannot tell a gate that refuses everything from a
+   * gate that saw nothing, and those need opposite fixes.
+   */
+  private writeFunnelRow(at: number, sel: FunnelCounts, exec: ExecFunnelCounts | null): void {
+    const h = this.metaGet("policy_hash") ?? ""
+    let ring: FunnelRingEntry[] = []
+    const raw = this.metaGet("funnel_ring")
+    if (raw) {
+      try {
+        const parsed: unknown = JSON.parse(raw)
+        if (Array.isArray(parsed)) ring = parsed as FunnelRingEntry[]
+      } catch {
+        // A corrupt ring is diagnostics, not ledger state. Start over rather
+        // than take the tick down for it.
+        ring = []
+      }
+    }
+    const row: FunnelRingEntry = { at, h, c: packFunnel(sel) }
+    if (exec) row.x = packExecFunnel(exec)
+    this.metaSet("funnel_ring", JSON.stringify(upsertFunnelRow(ring, row, 120)))
+  }
+
   private armedProbFor(mint: string, feats: FeatureSnapshot, origin: string, at: number): number {
     const liq = this.sql().exec<{ liquidity_usd: number | null }>(
       `SELECT liquidity_usd FROM ticks
