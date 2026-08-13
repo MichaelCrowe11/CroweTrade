@@ -202,7 +202,11 @@ export function decideExits(
     // a live rug signal outranks a profit target.
     if (cur.verdict === "blocked") {
       out.push({ position: p, reason: "safety-exit", exitPriceUsd: cur.priceUsd })
-    } else if (pnlPct >= policy.exit.takeProfitPct) {
+    } else if (policy.exit.takeProfitPct !== null && pnlPct >= policy.exit.takeProfitPct) {
+      // null is "no ceiling", not "a ceiling of zero". Without the guard a
+      // null target compares as `pnlPct >= null`, which coerces to 0 and
+      // exits every position the instant it is up a fraction of a percent —
+      // the exact inversion of what removing the target is for.
       out.push({ position: p, reason: "take-profit", exitPriceUsd: cur.priceUsd })
     } else if (pnlPct <= -policy.exit.stopLossPct) {
       out.push({ position: p, reason: "stop-loss", exitPriceUsd: cur.priceUsd })

@@ -136,7 +136,9 @@ export interface PolicyEnvelope {
   }
 
   exit: {
-    takeProfitPct: number
+    /** null means no profit target: ride the position to the stop or the
+     *  time-stop. See the value below for why that is not recklessness. */
+    takeProfitPct: number | null
     stopLossPct: number
     /** Flat exit after this long regardless of price. Meme decay is real. */
     timeStopMinutes: number
@@ -281,15 +283,37 @@ export const PAPER_POLICY: PolicyEnvelope = {
   },
   exit: {
     /**
-     * Take-profit widened from 60 to 120 on measured evidence.
+     * REMOVED 2026-08-13. Was 120, and before that 60.
      *
-     * Stops do not hold on these assets: an observed -35% stop realized at
-     * -43.6% because price gapped straight through it. With an effective loss
-     * near 40% and a win rate near 35%, breakeven needs roughly 75%, so a 60%
-     * target was mathematically losing before costs. 120 restores the
-     * asymmetry a low win rate requires.
+     * The exit sweep over the current cohort's 57 real entries, replayed
+     * against our own ticks: NOTP/SL35 returns -$2.43 where the shipped
+     * TP120/SL35 returns -$44.84. Every rule with a wider stop is worse and
+     * every rule carrying a take-profit is worse. Eighteen times the
+     * difference, from removing one field.
+     *
+     * WHY, and this is the part that generalises: the launchpad universe pays
+     * like a lottery. Median 30-minute forward return is -52%, and the
+     * winners in this cohort ran +1,321%, +2,124% and +2,133%. A cap at +120%
+     * converts every one of those into a small win while the losses stay
+     * whole. The six take-profits that fired averaged +116.6% for exactly
+     * that reason — that is not what they were worth, it is where they were
+     * cut off.
+     *
+     * The 120 above was not wrong when written. It was fitted on the
+     * DexScreener promotional feed, where the same sweep found no-take-profit
+     * worth only 2.5%. `allowedOrigins` then switched the venue to launchpad
+     * and the exit rule did not follow. Third time this project has shipped a
+     * parameter calibrated for a universe it no longer trades.
+     *
+     * The stop stays at 35 and the time-stop at 30 minutes, so downside is
+     * still bounded and nothing is held indefinitely. What is removed is only
+     * the ceiling.
+     *
+     * CAVEAT carried from the sweep itself: it ignores exit impact and checks
+     * stops before targets within a bar, so it is an upper bound for RANKING
+     * rules, never an achievable number. -$2.43 is not a forecast.
      */
-    takeProfitPct: 120,
+    takeProfitPct: null,
     stopLossPct: 35,
     /** These positions resolve in minutes; 45 was holding through the decay. */
     timeStopMinutes: 30,

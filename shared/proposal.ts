@@ -50,7 +50,7 @@ export type ProposablePath = (typeof PROPOSABLE)[number]
 /** Paths where `null` is a legitimate value meaning "gate not applied".
  *  Listed explicitly rather than inferred: accepting null for `dailyCapSol`
  *  would read as "no daily cap", which is the opposite of a safe default. */
-export const NULLABLE = ["entry.minModelProb"] as const
+export const NULLABLE = ["entry.minModelProb", "exit.takeProfitPct"] as const
 
 export interface ProposedChange {
   path: string
