@@ -228,7 +228,33 @@ export const PAPER_POLICY: PolicyEnvelope = {
      */
     minLiquidityUsd: 800,
     maxChangeH1Pct: 80,
-    maxEntryImpactPct: 1.5,
+    /**
+     * Widened from 1.5 to 2.5 on 2026-08-13, measured by /api/entry-sweep.
+     *
+     * 1.5 was set as a cost argument and never checked against outcomes: a
+     * round trip costs roughly twice the one-way impact, so 1.5% means the
+     * token must move ~3% to reach zero. Sound reasoning, wrong number.
+     *
+     * The sweep replays every candidate this gate REFUSED against its recorded
+     * 30-minute forward return, charging the round trip. At the shipped 1.5 the
+     * admitted population means +26.7% over 164 tokens. At 2.5 it means +28.5%
+     * over 464 — nearly triple the entries, and the figure with the single best
+     * token removed rises from +13.8% to +24.0%, so the gain is not one lucky
+     * ticket. The 1.5-to-2.0 band alone is 233 tokens at +31.0% net of cost.
+     *
+     * The boundary is sharp rather than a slope read optimistically: 2.5-to-3.0
+     * returns -36.2% and 5-to-10 returns -40.4%. 2.5 is an edge, and past it
+     * the cost argument that motivated 1.5 becomes correct again.
+     *
+     * This is a LOOSENING, and the envelope's rule is tighten instantly, loosen
+     * with delay. It was proposed by the sweep and signed by the operator, not
+     * applied because an agent found a number it liked.
+     *
+     * Caveat inherited from the sweep: refused candidates have no stop-loss
+     * path, since ticks are pruned at 48 hours. These are what the tokens did,
+     * not what we would have realized. It ranks ceilings; it does not forecast.
+     */
+    maxEntryImpactPct: 2.5,
     allowedOrigins: ["launchpad"],
     minObservedTicks: 3,
     /**

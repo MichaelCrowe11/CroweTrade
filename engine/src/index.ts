@@ -142,7 +142,7 @@ export default {
             priceUsd: (Number(r.amount) / 1_000_000).toFixed(4),
             description: r.description,
           })),
-          free: ["/api/health", "/api/positions", "/api/exit-sweep", "/api/train"],
+          free: ["/api/health", "/api/positions", "/api/exit-sweep", "/api/entry-sweep", "/api/train"],
         })
       }
 
@@ -287,6 +287,9 @@ export default {
       }
       if (url.pathname === "/api/exit-sweep" && req.method === "GET") {
         return json(await ledger(env).exitSweep())
+      }
+      if (url.pathname === "/api/entry-sweep" && req.method === "GET") {
+        return json(await ledger(env).entrySweep())
       }
       if (url.pathname === "/api/kill" && req.method === "POST") {
         if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)

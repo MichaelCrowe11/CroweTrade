@@ -43,6 +43,7 @@ import {
   summarizeFunnelRing,
   type FunnelRingEntry, type FunnelCounts, type ExecFunnelCounts,
 } from "../../shared/funnel.js"
+import { describeReturns, netOfCost } from "../../shared/sweep.js"
 import { computeFeatures } from "../../shared/features.js"
 import { hasDrifted } from "../../shared/trajectory.js"
 import { validateProposal } from "../../shared/proposal.js"
@@ -1904,6 +1905,104 @@ export class Ledger extends DurableObject<Env> {
       note: "Exit-rule counterfactual on real entries and our own observed ticks, fixed 30-minute horizon. Ignores exit impact, so these are upper bounds — rank rules against each other, do not read as achievable PnL.",
       positions: positions.length,
       results: results.sort((a, b) => b.pnlUsd - a.pnlUsd),
+    }
+  }
+
+  /**
+   * Entry-gate counterfactual: what did the gates REFUSE, and was it right?
+   *
+   * The exit sweep asked what a position would have done if held differently.
+   * This asks the harder question, because the refused population never
+   * traded: the ledger records what we bought, so every gate on the way in is
+   * evaluated only by survivors. That is how `takeProfitPct` stayed at 120 for
+   * weeks and how the model gate refused 41 of 41 unnoticed.
+   *
+   * The two gates here are the ones that became terminal once the model gate
+   * was disarmed. On 2026-08-13 they refused four of four admitted candidates.
+   *
+   * Data comes from `entry_skipped` events, not `decisions`, because the
+   * decision row records `entry_impact_pct` only on SUCCESS — every candidate
+   * refused for impact has no impact recorded. The event carries the number,
+   * which makes the events table the only place the refusals are measurable.
+   * (Writing the value onto the refused decision row would be better and is
+   * the obvious follow-up.)
+   *
+   * `meanExBest` is the load-bearing column and the reason this is worth
+   * shipping rather than running once in a scratchpad. This universe pays like
+   * a lottery, so equal-sized bets make the MEAN the portfolio statistic, and
+   * the mean is precisely what one outlier hijacks. Dropping the single best
+   * token is the cheapest honest robustness check there is: it is what showed
+   * the drift ceiling's most attractive cell, +289% at 250-and-above, to be
+   * -2.9% on n=5 without its one winner.
+   */
+  entrySweep(): unknown {
+    const sql = this.sql()
+
+    const refusals = (reason: string) =>
+      sql.exec<{ val: number | null; ret: number | null }>(
+        `WITH r AS (
+           SELECT json_extract(data, '$.mint') AS mint,
+                  MIN(COALESCE(json_extract(data, '$.impactPct'),
+                               json_extract(data, '$.runPct'))) AS val
+           FROM events
+           WHERE kind = 'entry_skipped' AND json_extract(data, '$.reason') = ?
+           GROUP BY mint
+         )
+         SELECT r.val AS val, d.forward_ret_pct AS ret
+         FROM r JOIN decisions d ON d.mint = r.mint
+         WHERE d.labeled = 1 AND d.forward_ret_pct IS NOT NULL AND r.val IS NOT NULL`,
+        reason,
+      ).toArray().map((x) => ({ val: x.val as number, ret: x.ret as number }))
+
+    const baseline = sql.exec<{ ret: number | null }>(
+      "SELECT forward_ret_pct AS ret FROM decisions WHERE labeled = 1 AND entered = 1 AND forward_ret_pct IS NOT NULL",
+    ).toArray().map((x) => x.ret as number)
+
+    const describe = describeReturns
+
+    // Drift carries no execution cost: raising it is purely a selection bet.
+    // Impact IS a cost, so admitting a candidate at 3% must be charged the
+    // round trip or the sweep would happily recommend admitting everything.
+    const drift = refusals("already ran since first sight")
+    const impact = refusals("impact above cost hurdle")
+
+    const sweep = (
+      pool: { val: number; ret: number }[],
+      ceilings: number[],
+      shipped: number,
+      cost: boolean,
+    ) => ({
+      shipped,
+      refusalsMeasured: pool.length,
+      grid: ceilings.map((c) => ({
+        ceiling: c,
+        isShipped: c === shipped,
+        ...describe([
+          ...baseline,
+          ...pool.filter((p) => p.val <= c).map((p) => (cost ? netOfCost(p.ret, p.val) : p.ret)),
+        ])!,
+      })),
+      // The admitted-only slice. The grid answers "is the portfolio better",
+      // this answers "is the marginal candidate worth having", and a band that
+      // is negative while its grid row improves means the improvement came
+      // from somewhere else.
+      bands: ceilings.slice(0, -1).map((lo, i) => {
+        const hi = ceilings[i + 1]!
+        return {
+          band: `${lo} -> ${hi}`,
+          ...(describe(
+            pool.filter((p) => p.val > lo && p.val <= hi)
+              .map((p) => (cost ? netOfCost(p.ret, p.val) : p.ret)),
+          ) ?? { n: 0 }),
+        }
+      }),
+    })
+
+    return {
+      note: "Entry-gate counterfactual over REFUSED candidates, scored on recorded 30-minute forward returns. The stop-loss path is not modelled because ticks are pruned at 48h, so these are what the tokens did, not what we would have realized. Ranks ceilings; does not forecast. Read meanExBestPct before meanPct.",
+      baseline: { note: "candidates the engine actually entered", ...describe(baseline) },
+      drift: sweep(drift, [30, 50, 75, 100, 150, 250, 500], 30, false),
+      impact: sweep(impact, [1.5, 2, 2.5, 3, 4, 5, 7.5, 10], 2.5, true),
     }
   }
 
