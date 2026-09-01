@@ -691,7 +691,7 @@ export class Ledger extends DurableObject<Env> {
    * until the written object has been read back at the size that was sent.
    * One batch a run, one run an hour: bounded work inside a tick budget.
    */
-  async maybeArchive(opts: { force?: boolean; retainDays?: number } = {}): Promise<{ archived: number; key: string | null; reason: string }> {
+  async maybeArchive(opts: { force?: boolean; retainDays?: number; resetHistory?: boolean } = {}): Promise<{ archived: number; key: string | null; reason: string }> {
     const now = Date.now()
     const RETAIN_MS = (opts.retainDays ?? 60) * 24 * 3_600_000
     const BATCH = 20_000
@@ -700,6 +700,11 @@ export class Ledger extends DurableObject<Env> {
     const bucket = (this.env as unknown as { ARCHIVE?: R2Bucket }).ARCHIVE
     if (!bucket) return { archived: 0, key: null, reason: "no ARCHIVE binding" }
     this.metaSet("archive_last_at", String(now))
+    // Repair switch, operator only: the first verification run on 08-31 rolled
+    // creators into history and then failed to delete their rows (bound-variable
+    // limit), which double-counted them. Clearing history before a re-run that
+    // completes is the one honest fix; the rows themselves were never lost.
+    if (opts.resetHistory) this.sql().exec("DELETE FROM creator_history")
     // Events are the operational log; thirty days covers every sweep that reads them.
     this.sql().exec("DELETE FROM events WHERE at < ?", now - 30 * 24 * 3_600_000)
     const rows = this.sql().exec<Record<string, unknown>>(
@@ -731,21 +736,27 @@ export class Ledger extends DurableObject<Env> {
       if (Number(r.died) === 1) a.rugs += 1
       byCreator.set(c, a)
     }
-    for (const [creator, a] of byCreator) {
-      this.sql().exec(
-        `INSERT INTO creator_history (creator, launches, rugs, last_seen) VALUES (?, ?, ?, ?)
-         ON CONFLICT(creator) DO UPDATE SET launches = launches + excluded.launches,
-           rugs = rugs + excluded.rugs, last_seen = MAX(last_seen, excluded.last_seen)`,
-        creator, a.n, a.rugs, lastAt,
-      )
-    }
+    // Rollup and delete are one transaction: a failure in either leaves the
+    // object exactly as it was, with the archive object in R2 as a harmless
+    // duplicate for the next run to overwrite. The Durable Object binds at
+    // most 100 variables a statement; 50 a chunk keeps headroom.
     const mints = rows.map((r) => String(r.mint))
-    for (let i = 0; i < mints.length; i += 500) {
-      const chunk = mints.slice(i, i + 500)
-      const q = chunk.map(() => "?").join(",")
-      this.sql().exec(`DELETE FROM decisions WHERE mint IN (${q})`, ...chunk)
-      this.sql().exec(`DELETE FROM creators WHERE mint IN (${q})`, ...chunk)
-    }
+    this.ctx.storage.transactionSync(() => {
+      for (const [creator, a] of byCreator) {
+        this.sql().exec(
+          `INSERT INTO creator_history (creator, launches, rugs, last_seen) VALUES (?, ?, ?, ?)
+           ON CONFLICT(creator) DO UPDATE SET launches = launches + excluded.launches,
+             rugs = rugs + excluded.rugs, last_seen = MAX(last_seen, excluded.last_seen)`,
+          creator, a.n, a.rugs, lastAt,
+        )
+      }
+      for (let i = 0; i < mints.length; i += 50) {
+        const chunk = mints.slice(i, i + 50)
+        const q = chunk.map(() => "?").join(",")
+        this.sql().exec(`DELETE FROM decisions WHERE mint IN (${q})`, ...chunk)
+        this.sql().exec(`DELETE FROM creators WHERE mint IN (${q})`, ...chunk)
+      }
+    })
     this.event("archive", { key, rows: rows.length, firstAt: first, lastAt, creators: byCreator.size })
     return { archived: rows.length, key, reason: "ok" }
   }

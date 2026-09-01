@@ -308,9 +308,9 @@ export default {
         // Operator: run one batch now. `retainDays` overrides the window for a
         // verification run; it archives before it deletes either way.
         if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
-        const body = (await req.json().catch(() => ({}))) as { retainDays?: number }
+        const body = (await req.json().catch(() => ({}))) as { retainDays?: number; resetHistory?: boolean }
         const retainDays = typeof body.retainDays === "number" && body.retainDays >= 1 ? body.retainDays : undefined
-        return json(await ledger(env).maybeArchive({ force: true, retainDays }))
+        return json(await ledger(env).maybeArchive({ force: true, retainDays, resetHistory: body.resetHistory === true }))
       }
       if (url.pathname === "/api/genesis" && req.method === "POST") {
         // The collector on the Pro posts its daily summary here.
