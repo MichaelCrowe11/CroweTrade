@@ -107,6 +107,9 @@ export default {
     // so its log line lands inside this invocation.
     const alert = await stub.maybeAlert()
     if (alert.sent) console.log(JSON.stringify({ msg: "alert", ...alert }))
+    // The daily digest: queued at its hour, sent by the flush below.
+    const digest = await stub.maybeDigest()
+    if (digest.queued) console.log(JSON.stringify({ msg: "digest", ...digest }))
     // Operational alerts (breaker trips, kill flips, scan outages) queue
     // during the tick and send here, on the same no-mail-inside-trading seam.
     const ops = await stub.flushAlerts()
@@ -293,6 +296,18 @@ export default {
       }
       if (url.pathname === "/api/entry-sweep" && req.method === "GET") {
         return json(await ledger(env).entrySweep())
+      }
+      if (url.pathname === "/api/digest" && req.method === "GET") {
+        // Read the digest as it would be sent, without sending it.
+        if (!(await authorized(req, env, "research"))) return json({ error: "unauthorized" }, 401)
+        return json(await ledger(env).composeDigest(Date.now()))
+      }
+      if (url.pathname === "/api/digest" && req.method === "POST") {
+        // Operator: send today's digest now.
+        if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
+        const queued = await ledger(env).maybeDigest(true)
+        const ops = await ledger(env).flushAlerts()
+        return json({ ...queued, ...ops })
       }
       if (url.pathname === "/api/kill" && req.method === "POST") {
         if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)

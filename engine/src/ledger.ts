@@ -556,6 +556,110 @@ export class Ledger extends DurableObject<Env> {
   }
 
   /**
+   * The daily digest: the record, reported.
+   *
+   * Every instrument this engine carries was built and then not read. The
+   * calibration loop, the funnel ring, the creator corpus and two PostHog
+   * alerts all ran for seventeen days into an inbox nobody opened while the
+   * exit gauge was off by a third. A system that only records is a system
+   * that fails silently; this is the part that speaks. One email a day, at
+   * 07:00 Phoenix, with the numbers an operator needs to decide whether to
+   * keep going, and nothing that needs a dashboard to interpret.
+   *
+   * Composition is synchronous and reads only the ledger, so it can never
+   * take a tick down. Sending goes through the same queue as the breaker
+   * alerts, on the same no-mail-inside-trading seam.
+   */
+  composeDigest(now: number): { subject: string; text: string } {
+    const sql = this.sql()
+    const hash = this.metaGet("policy_hash") ?? "unset"
+    const short = hash.slice(0, 8)
+    const solUsd = Number(this.metaGet("sol_usd") ?? "0")
+    const killed = this.metaGet("kill") === "1"
+    const breakerOpen = Number(this.metaGet("breaker_until") ?? "0") > now
+    const since = now - 24 * 3_600_000
+    type Agg = { n: number | null; usd: number | null; sol: number | null; wins: number | null }
+    const agg = (where: string, ...args: unknown[]): Agg => sql.exec<Agg>(
+      `SELECT COUNT(*) AS n, SUM(pnl_usd) AS usd, SUM(pnl_sol) AS sol,
+              SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END) AS wins
+       FROM positions WHERE closed_at IS NOT NULL AND priced_by = 'quote' AND ${where}`,
+      ...args,
+    ).one()
+    const day = agg("closed_at >= ?", since)
+    const cohort = agg("policy_hash = ?", hash)
+    const reasons = sql.exec<{ exit_reason: string | null; n: number; usd: number | null }>(
+      `SELECT exit_reason, COUNT(*) AS n, SUM(pnl_usd) AS usd FROM positions
+       WHERE closed_at >= ? AND priced_by = 'quote' GROUP BY exit_reason ORDER BY n DESC`,
+      since,
+    ).toArray()
+    const open = this.openPositions().length
+    const breakers = sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM events WHERE kind = 'breaker' AND at >= ?", since,
+    ).one().n
+    const refused = sql.exec<{ reason: string; n: number }>(
+      "SELECT skip_reason AS reason, COUNT(*) AS n FROM decisions WHERE at >= ? AND skip_reason LIKE 'deployer-%' GROUP BY 1",
+      since,
+    ).toArray()
+    const win = (a: Agg) => a.n ? `${((100 * (a.wins ?? 0)) / a.n).toFixed(0)}%` : "n/a"
+    const money = (a: Agg) => `${(a.sol ?? 0).toFixed(3)} SOL ($${(a.usd ?? 0).toFixed(2)})`
+    let funnelLine = "funnel: no rows under this policy yet"
+    const raw = this.metaGet("funnel_ring")
+    if (raw) {
+      try {
+        const w = summarizeFunnelRing(JSON.parse(raw) as FunnelRingEntry[], hash)
+        if (w) {
+          const c = w.counts
+          const x = w.exec
+          funnelLine =
+            `funnel (${w.ticks} ticks): scanned ${c.scanned}, admitted ${c.admitted}, ` +
+            `deployer refused ${c.deployerRefused}, thin ${c.thinLiquidity}, parabolic ${c.parabolic}` +
+            (x ? `; exec: entered ${x.entered}, impact ${x.impactAboveHurdle}, drifted ${x.drifted}, no route ${x.noRoute}, sim failed ${x.simulationFailed}` : "")
+        }
+      } catch {
+        // unreadable ring; the line above says so
+      }
+    }
+    const lp = this.originStat("launchpad")
+    const fmt = (v: number | null) => (v === null ? "n/a" : `${v.toFixed(1)}%`)
+    const lines = [
+      `Policy ${short}${killed ? " KILLED" : ""}${breakerOpen ? ", breaker OPEN" : ""}. SOL/USD ${solUsd.toFixed(2)}. Open positions: ${open}.`,
+      "",
+      `Last 24h: ${day.n ?? 0} closes, ${money(day)}, win rate ${win(day)}, breaker trips ${breakers}.`,
+      ...reasons.map((r) => `  ${r.exit_reason ?? "?"}: ${r.n} closes, $${(r.usd ?? 0).toFixed(2)}`),
+      `Cohort under ${short}: ${cohort.n ?? 0} closes, ${money(cohort)}, win rate ${win(cohort)}.`,
+      "",
+      funnelLine,
+      refused.length > 0
+        ? `deployer refusals at first sight (24h): ${refused.map((r) => `${r.reason} ${r.n}`).join(", ")}`
+        : "deployer refusals at first sight (24h): none",
+      `calibration (launchpad, all time): entered ${fmt(lp.enteredRet)} vs refused-eligible ${fmt(lp.refusedRet)} forward 30m; ${lp.labeled} labeled, ${lp.died} died.`,
+      "",
+      "Still paper. No capital at risk.",
+      "https://crowetrade-engine.yellow-block-3adc.workers.dev/api/positions",
+      "https://crowetrade-engine.yellow-block-3adc.workers.dev/api/exit-sweep",
+    ]
+    const sol = day.sol ?? 0
+    return {
+      subject: `CroweTrade daily: ${day.n ?? 0} closes, ${sol >= 0 ? "+" : ""}${sol.toFixed(3)} SOL, win ${win(day)} (${short})`,
+      text: lines.join("\n"),
+    }
+  }
+
+  maybeDigest(force = false): { queued: boolean; reason: string } {
+    const now = Date.now()
+    const DIGEST_HOUR_UTC = 14 // 07:00 Phoenix
+    const today = new Date(now).toISOString().slice(0, 10)
+    if (!force) {
+      if (new Date(now).getUTCHours() !== DIGEST_HOUR_UTC) return { queued: false, reason: "not the hour" }
+      if (this.metaGet("opsent:digest") === today) return { queued: false, reason: "already sent today" }
+    }
+    this.metaSet("opsent:digest", today)
+    const { subject, text } = this.composeDigest(now)
+    this.queueAlert(`digest:${today}${force ? `:${now}` : ""}`, subject, text)
+    return { queued: true, reason: subject }
+  }
+
+  /**
    * Email Michael once, when the launchpad comparison first becomes readable.
    *
    * Called after every tick. The state machine exists because this method both
