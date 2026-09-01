@@ -112,6 +112,9 @@ export default {
     if (digest.queued) console.log(JSON.stringify({ msg: "digest", ...digest }))
     // Operational alerts (breaker trips, kill flips, scan outages) queue
     // during the tick and send here, on the same no-mail-inside-trading seam.
+    // Hourly archive of refused decision rows past retention, one batch a run.
+    const arch = await stub.maybeArchive()
+    if (arch.archived > 0 || arch.reason.startsWith("verification")) console.log(JSON.stringify({ msg: "archive", ...arch }))
     const ops = await stub.flushAlerts()
     if (ops.sent > 0 || ops.failed > 0) console.log(JSON.stringify({ msg: "opalerts", ...ops }))
   },
@@ -296,6 +299,18 @@ export default {
       }
       if (url.pathname === "/api/entry-sweep" && req.method === "GET") {
         return json(await ledger(env).entrySweep())
+      }
+      if (url.pathname === "/api/archive" && req.method === "GET") {
+        if (!(await authorized(req, env, "research"))) return json({ error: "unauthorized" }, 401)
+        return json(await ledger(env).archiveStatus())
+      }
+      if (url.pathname === "/api/archive" && req.method === "POST") {
+        // Operator: run one batch now. `retainDays` overrides the window for a
+        // verification run; it archives before it deletes either way.
+        if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
+        const body = (await req.json().catch(() => ({}))) as { retainDays?: number }
+        const retainDays = typeof body.retainDays === "number" && body.retainDays >= 1 ? body.retainDays : undefined
+        return json(await ledger(env).maybeArchive({ force: true, retainDays }))
       }
       if (url.pathname === "/api/genesis" && req.method === "POST") {
         // The collector on the Pro posts its daily summary here.

@@ -284,6 +284,14 @@ export class Ledger extends DurableObject<Env> {
       // follow-up's `at > ?` full-scanned 813k decision rows every tick.
       // Same one-time build risk as idx_ticks_at above; same answer.
       sql.exec("CREATE INDEX IF NOT EXISTS idx_decisions_label_at ON decisions (labeled, voided, at)")
+      // Archive bookkeeping (2026-08-31). Refused decision rows older than the
+      // retention window leave the object for R2 in hourly batches; what the
+      // deployer gate needs from them (launches and deaths per creator) rolls
+      // into this table first, so pruning never shortens the gate's memory.
+      sql.exec(`CREATE TABLE IF NOT EXISTS creator_history (
+        creator TEXT PRIMARY KEY, launches INTEGER NOT NULL, rugs INTEGER NOT NULL, last_seen INTEGER NOT NULL
+      )`)
+      sql.exec("CREATE INDEX IF NOT EXISTS idx_events_at ON events (at)")
       // Agent policy proposals. Inert records: the engine never reads this
       // table to decide anything, it exists so a human can review what an
       // agent suggested and why.
@@ -672,6 +680,98 @@ export class Ledger extends DurableObject<Env> {
     try { return JSON.parse(raw) as unknown } catch { return null }
   }
 
+  /**
+   * Hourly archive of refused decision rows past the retention window.
+   *
+   * The object holds one row per token it has ever seen (813k by 08-31, 35k
+   * a day). Entered and eligible rows are the strategy's record and stay.
+   * Refused rows are the calibration control group and the raw-universe
+   * baseline; two months of them is plenty for both, and the rest belongs
+   * in R2 as JSON lines where any tool can read it. Nothing is deleted
+   * until the written object has been read back at the size that was sent.
+   * One batch a run, one run an hour: bounded work inside a tick budget.
+   */
+  async maybeArchive(opts: { force?: boolean; retainDays?: number } = {}): Promise<{ archived: number; key: string | null; reason: string }> {
+    const now = Date.now()
+    const RETAIN_MS = (opts.retainDays ?? 60) * 24 * 3_600_000
+    const BATCH = 20_000
+    const last = Number(this.metaGet("archive_last_at") ?? "0")
+    if (!opts.force && now - last < 3_600_000) return { archived: 0, key: null, reason: "not due" }
+    const bucket = (this.env as unknown as { ARCHIVE?: R2Bucket }).ARCHIVE
+    if (!bucket) return { archived: 0, key: null, reason: "no ARCHIVE binding" }
+    this.metaSet("archive_last_at", String(now))
+    // Events are the operational log; thirty days covers every sweep that reads them.
+    this.sql().exec("DELETE FROM events WHERE at < ?", now - 30 * 24 * 3_600_000)
+    const rows = this.sql().exec<Record<string, unknown>>(
+      `SELECT d.*, c.creator AS creator FROM decisions d LEFT JOIN creators c ON c.mint = d.mint
+       WHERE d.labeled = 1 AND d.entered = 0 AND d.eligible = 0 AND d.at < ? ORDER BY d.at ASC LIMIT ?`,
+      now - RETAIN_MS, BATCH,
+    ).toArray()
+    if (rows.length === 0) return { archived: 0, key: null, reason: "nothing older than retention" }
+    const first = Number(rows[0]!.at)
+    const lastAt = Number(rows[rows.length - 1]!.at)
+    const key = `decisions/${new Date(first).toISOString().slice(0, 10)}/${first}-${lastAt}.jsonl`
+    const body = rows.map((r) => JSON.stringify(r)).join("\n") + "\n"
+    const bytes = new TextEncoder().encode(body)
+    await bucket.put(key, bytes, {
+      httpMetadata: { contentType: "application/x-ndjson" },
+      customMetadata: { rows: String(rows.length), firstAt: String(first), lastAt: String(lastAt) },
+    })
+    const head = await bucket.head(key)
+    if (!head || head.size !== bytes.byteLength) {
+      this.event("archive_failed", { key, expected: bytes.byteLength, got: head?.size ?? null })
+      return { archived: 0, key, reason: "verification failed; nothing deleted" }
+    }
+    const byCreator = new Map<string, { n: number; rugs: number }>()
+    for (const r of rows) {
+      const c = typeof r.creator === "string" ? r.creator : null
+      if (!c) continue
+      const a = byCreator.get(c) ?? { n: 0, rugs: 0 }
+      a.n += 1
+      if (Number(r.died) === 1) a.rugs += 1
+      byCreator.set(c, a)
+    }
+    for (const [creator, a] of byCreator) {
+      this.sql().exec(
+        `INSERT INTO creator_history (creator, launches, rugs, last_seen) VALUES (?, ?, ?, ?)
+         ON CONFLICT(creator) DO UPDATE SET launches = launches + excluded.launches,
+           rugs = rugs + excluded.rugs, last_seen = MAX(last_seen, excluded.last_seen)`,
+        creator, a.n, a.rugs, lastAt,
+      )
+    }
+    const mints = rows.map((r) => String(r.mint))
+    for (let i = 0; i < mints.length; i += 500) {
+      const chunk = mints.slice(i, i + 500)
+      const q = chunk.map(() => "?").join(",")
+      this.sql().exec(`DELETE FROM decisions WHERE mint IN (${q})`, ...chunk)
+      this.sql().exec(`DELETE FROM creators WHERE mint IN (${q})`, ...chunk)
+    }
+    this.event("archive", { key, rows: rows.length, firstAt: first, lastAt, creators: byCreator.size })
+    return { archived: rows.length, key, reason: "ok" }
+  }
+
+  archiveStatus(): unknown {
+    const sql = this.sql()
+    const pending = sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM decisions WHERE labeled = 1 AND entered = 0 AND eligible = 0 AND at < ?",
+      Date.now() - 60 * 24 * 3_600_000,
+    ).one().n
+    const history = sql.exec<{ creators: number; launches: number | null }>(
+      "SELECT COUNT(*) AS creators, SUM(launches) AS launches FROM creator_history",
+    ).one()
+    const lastRun = sql.exec<{ at: number; data: string }>(
+      "SELECT at, data FROM events WHERE kind IN ('archive', 'archive_failed') ORDER BY at DESC LIMIT 5",
+    ).toArray()
+    return {
+      retentionDays: 60,
+      pendingRows: pending,
+      decisions: sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM decisions").one().n,
+      creatorHistory: history,
+      lastRuns: lastRun.map((r) => ({ at: r.at, ...(JSON.parse(r.data) as Record<string, unknown>) })),
+      lastAttemptAt: Number(this.metaGet("archive_last_at") ?? "0") || null,
+    }
+  }
+
   maybeDigest(force = false): { queued: boolean; reason: string } {
     const now = Date.now()
     const DIGEST_HOUR_UTC = 14 // 07:00 Phoenix
@@ -1057,9 +1157,11 @@ export class Ledger extends DurableObject<Env> {
         const rows = this.sql().exec<{ mint: string; prior: number; rugs: number }>(
           `SELECT cr.mint AS mint,
                   (SELECT COUNT(*) FROM (SELECT 1 FROM creators c2 JOIN decisions d2 ON d2.mint = c2.mint
-                     WHERE c2.creator = cr.creator AND c2.mint != cr.mint AND d2.labeled = 1 LIMIT ${PRIOR_CAP})) AS prior,
+                     WHERE c2.creator = cr.creator AND c2.mint != cr.mint AND d2.labeled = 1 LIMIT ${PRIOR_CAP}))
+                  + COALESCE((SELECT h.launches FROM creator_history h WHERE h.creator = cr.creator), 0) AS prior,
                   (SELECT COUNT(*) FROM (SELECT 1 FROM creators c3 JOIN decisions d3 ON d3.mint = c3.mint
-                     WHERE c3.creator = cr.creator AND c3.mint != cr.mint AND d3.labeled = 1 AND d3.died = 1 LIMIT ${RUG_CAP})) AS rugs
+                     WHERE c3.creator = cr.creator AND c3.mint != cr.mint AND d3.labeled = 1 AND d3.died = 1 LIMIT ${RUG_CAP}))
+                  + COALESCE((SELECT h.rugs FROM creator_history h WHERE h.creator = cr.creator), 0) AS rugs
              FROM creators cr WHERE cr.mint IN (${chunk.map(() => "?").join(",")})`,
           ...chunk,
         ).toArray()
@@ -2411,9 +2513,11 @@ export class Ledger extends DurableObject<Env> {
     for (const row of this.sql().exec<{ mint: string; prior: number; rugs: number }>(
       `SELECT cr.mint AS mint,
               (SELECT COUNT(*) FROM creators c2 JOIN decisions d2 ON d2.mint = c2.mint
-                WHERE c2.creator = cr.creator AND c2.mint != cr.mint AND d2.labeled = 1) AS prior,
+                WHERE c2.creator = cr.creator AND c2.mint != cr.mint AND d2.labeled = 1)
+              + COALESCE((SELECT h.launches FROM creator_history h WHERE h.creator = cr.creator), 0) AS prior,
               (SELECT COUNT(*) FROM creators c3 JOIN decisions d3 ON d3.mint = c3.mint
-                WHERE c3.creator = cr.creator AND c3.mint != cr.mint AND d3.labeled = 1 AND d3.died = 1) AS rugs
+                WHERE c3.creator = cr.creator AND c3.mint != cr.mint AND d3.labeled = 1 AND d3.died = 1)
+              + COALESCE((SELECT h.rugs FROM creator_history h WHERE h.creator = cr.creator), 0) AS rugs
          FROM creators cr WHERE cr.mint IN (${wanted.map(() => "?").join(",")})`,
       ...wanted,
     ).toArray()) {
@@ -2470,10 +2574,11 @@ export class Ledger extends DurableObject<Env> {
     let priorRugs: number | undefined
     if (creator) {
       const h = this.sql().exec<{ prior: number; rugs: number }>(
-        `SELECT COUNT(*) AS prior, SUM(CASE WHEN d.died = 1 THEN 1 ELSE 0 END) AS rugs
+        `SELECT COUNT(*) + COALESCE((SELECT h.launches FROM creator_history h WHERE h.creator = ?), 0) AS prior,
+                SUM(CASE WHEN d.died = 1 THEN 1 ELSE 0 END) + COALESCE((SELECT h.rugs FROM creator_history h WHERE h.creator = ?), 0) AS rugs
          FROM creators cr JOIN decisions d ON d.mint = cr.mint
          WHERE cr.creator = ? AND cr.mint != ? AND d.labeled = 1`,
-        creator, mint,
+        creator, creator, creator, mint,
       ).one()
       if (h.prior > 0) { priorMints = h.prior; priorRugs = h.rugs ?? 0 }
     }
