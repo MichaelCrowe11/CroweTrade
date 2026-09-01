@@ -10,3 +10,4 @@ worker-configuration.d.ts
 
 # Collaborator credential (research tier). Never committed.
 .research-token
+.dev.vars*

@@ -283,6 +283,9 @@ export default {
         return json(await ledger(env).researchQuery(body.sql))
       }
       if (url.pathname === "/api/train" && req.method === "GET") {
+        // Research tier: a fit over the corpus is the heaviest read the object
+        // serves, and an unauthenticated one was a free reset button.
+        if (!(await authorized(req, env, "research"))) return json({ error: "unauthorized" }, 401)
         return json(await ledger(env).trainModel())
       }
       if (url.pathname === "/api/exit-sweep" && req.method === "GET") {

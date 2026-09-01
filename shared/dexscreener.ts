@@ -139,24 +139,47 @@ async function getJson<T>(url: string, signal: AbortSignal): Promise<T> {
 }
 
 /** Current SOL price in USD, used to convert reported USD liquidity to SOL. */
+const JUP_PRICE = "https://lite-api.jup.ag/price/v3"
+const WSOL_MINT = "So11111111111111111111111111111111111111112"
+
+/**
+ * SOL/USD, from the venue we quote through.
+ *
+ * INCIDENT 2026-08-16 to 2026-08-31. The previous form asked DexScreener's
+ * search endpoint for "SOL/USDC" and took the first Solana pair whose base
+ * symbol was SOL. That is not wrapped SOL: it returned a pair priced at
+ * $76.06 while Jupiter, CoinGecko and pump.fun's own usd_market_cap all said
+ * $103. The engine sized, priced and recorded every position at $76 for two
+ * weeks, so its Jupiter-implied entry price sat 26% BELOW the pump.fun mark it
+ * then compared against in decideExits. The book believed it was +35% the
+ * moment it bought; the -35% stop fired at a true -52%; the drift gate never
+ * refused anything under a true +76% run. 1,768 closes were judged on it.
+ *
+ * Jupiter's price feed is primary because Jupiter is the venue every quote in
+ * this engine comes from, so entry, exit and USD conversion share one rate.
+ * DexScreener stays as a fallback but only the canonical wrapped-SOL pair,
+ * chosen by liquidity, is accepted. A symbol match is not an identity.
+ */
 export async function fetchSolUsd(signal: AbortSignal): Promise<number> {
-  const body = await getJson<{ pairs?: DexPair[] }>(`${SEARCH}?q=SOL%2FUSDC`, signal)
-  const quote = body.pairs?.find(
-    (p) => p.chainId === "solana" && p.baseToken.symbol === "SOL" && p.priceUsd,
+  try {
+    const body = await getJson<Record<string, { usdPrice?: number }>>(
+      `${JUP_PRICE}?ids=${WSOL_MINT}`, signal,
+    )
+    const px = Number(body[WSOL_MINT]?.usdPrice)
+    if (Number.isFinite(px) && px > 0) return px
+  } catch {
+    // fall through to the pair-based source
+  }
+  const body = await getJson<{ pairs?: (DexPair & { quoteToken?: { symbol?: string } })[] }>(
+    `${SEARCH}?q=SOL%2FUSDC`, signal,
   )
-  if (!quote?.priceUsd) throw new Error("no SOL/USDC pair in response")
+  const quote = (body.pairs ?? [])
+    .filter((p) => p.chainId === "solana" && p.baseToken.address === WSOL_MINT && p.priceUsd)
+    .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0]
+  if (!quote?.priceUsd) throw new Error("no wrapped-SOL pair in response")
   return Number(quote.priceUsd)
 }
 
-/**
- * Collects candidate mints from the two discovery endpoints.
- *
- * Both are used because they surface different populations: profiles skews to
- * freshly created tokens, boosts to ones someone is paying to promote. Paying
- * for promotion is not a positive signal on its own, but it does concentrate
- * the set of tokens that will actually see volume, which is where the tradeable
- * moves are.
- */
 async function discoverMints(signal: AbortSignal): Promise<Map<string, DiscoveryOrigin>> {
   const [profiles, boosts] = await Promise.all([
     getJson<TokenRef[]>(PROFILES, signal).catch(() => [] as TokenRef[]),
@@ -238,22 +261,19 @@ export async function fetchPairsForMints(
 export async function fetchCandidates(
   signal: AbortSignal,
   /**
-   * Last known SOL price. When greater than zero the quote is SKIPPED, not
-   * merely used as a fallback.
-   *
-   * The price endpoint shares a rate limit with discovery, and it was taking
-   * the WHOLE scan down six times an hour: one failed quote threw, and a tick
-   * that could have discovered forty tokens discovered none. SOL moving a
-   * fraction of a percent while we reuse a cached figure costs nothing; losing
-   * a minute of discovery on this market costs the tokens launched in it.
+   * Last known SOL price. When greater than zero and `refresh` is false the
+   * quote is SKIPPED, not merely used as a fallback: the price endpoint used
+   * to share a rate limit with discovery and one failed quote blanked a whole
+   * tick's scan. With `refresh` the quote is attempted and a failure falls
+   * back to this value, so a stale rate never costs a minute of discovery.
    */
   fallbackSolUsd = 0,
+  refresh = false,
 ): Promise<Scan> {
-  // A usable cached price SKIPS the quote entirely. Passing it as a fallback
-  // alone would still spend the request every tick and only help on failure,
-  // which is the bug this comment exists to stop someone reintroducing.
   const [solResult, origins] = await Promise.all([
-    fallbackSolUsd > 0 ? Promise.resolve(fallbackSolUsd) : fetchSolUsd(signal).catch(() => null),
+    fallbackSolUsd > 0 && !refresh
+      ? Promise.resolve(fallbackSolUsd)
+      : fetchSolUsd(signal).catch(() => (fallbackSolUsd > 0 ? fallbackSolUsd : null)),
     discoverMints(signal),
   ])
   const solUsd = solResult ?? 0

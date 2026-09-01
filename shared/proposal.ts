@@ -38,6 +38,8 @@ export const PROPOSABLE = [
   "entry.minObservedTicks",
   "entry.minModelProb",
   "entry.allowedOrigins",
+  "entry.maxDeployerPriorMints",
+  "entry.maxDeployerPriorRugs",
   "breaker.consecutiveStopLimit",
   "breaker.cooldownMinutes",
   "exit.takeProfitPct",
@@ -50,7 +52,10 @@ export type ProposablePath = (typeof PROPOSABLE)[number]
 /** Paths where `null` is a legitimate value meaning "gate not applied".
  *  Listed explicitly rather than inferred: accepting null for `dailyCapSol`
  *  would read as "no daily cap", which is the opposite of a safe default. */
-export const NULLABLE = ["entry.minModelProb", "exit.takeProfitPct"] as const
+export const NULLABLE = [
+  "entry.minModelProb", "exit.takeProfitPct",
+  "entry.maxDeployerPriorMints", "entry.maxDeployerPriorRugs",
+] as const
 
 export interface ProposedChange {
   path: string
@@ -117,6 +122,8 @@ const LOWER_IS_TIGHTER: Record<string, boolean> = {
   "entry.maxChangeH1Pct": true,
   "entry.maxEntryImpactPct": true,
   "entry.maxDriftSinceFirstSightPct": true,
+  "entry.maxDeployerPriorMints": true,
+  "entry.maxDeployerPriorRugs": true,
   "exit.stopLossPct": true,
   "exit.timeStopMinutes": true,
   "breaker.consecutiveStopLimit": true,

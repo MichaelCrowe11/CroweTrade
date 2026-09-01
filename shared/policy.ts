@@ -113,6 +113,14 @@ export interface PolicyEnvelope {
      * pay, which is the only comparison that describes the actual trade.
      */
     maxDriftSinceFirstSightPct: number
+    /**
+     * Deployer history from our own corpus (creators x labeled decisions).
+     * null disables the check; undefined history (creator never seen, or no
+     * labeled prior mint) is never refused, because no history is not a
+     * clean history and is not a dirty one either.
+     */
+    maxDeployerPriorMints: number | null
+    maxDeployerPriorRugs: number | null
     minModelProb: number | null
     /**
      * Identity of the exact frozen weights (shared/armed-model.ts). In the
@@ -267,6 +275,24 @@ export const PAPER_POLICY: PolicyEnvelope = {
      */
     maxDriftSinceFirstSightPct: 30,
     /**
+     * Added 2026-08-31 from the corpus the engine had been building without
+     * reading: 813k first-sight decisions joined to their creators.
+     *
+     * A creator whose PREVIOUS launch died (rug, vanished, or -90%) launches
+     * a token that dies 47.6% of the time against a 3.5% base rate (n=24,036).
+     * Creators with more than ten prior launches supply 62% of the universe
+     * and run flatter and thinner than first launches: mean -2.0% to -2.4%
+     * with 0.9% to 1.5% of tokens ever clearing +30%, against +1.6% and 1.87%
+     * for a first launch (n=141,126). Neither is an edge on its own; both
+     * remove the population that is measurably worse than random.
+     *
+     * "Prior" counts only LABELED mints, so a factory the engine met a minute
+     * ago reads as unknown and passes. What would loosen this: a cohort under
+     * it whose refused deployer-history counterfactual outperforms its entries.
+     */
+    maxDeployerPriorMints: 10,
+    maxDeployerPriorRugs: 0,
+    /**
      * DISARMED 2026-08-11. Was 0.2, armed 2026-08-09 on a genuine result: the
      * fit selected a reliability bucket observing ~24% against a 5.8% base,
      * the first measured selection power this system produced.
@@ -309,40 +335,32 @@ export const PAPER_POLICY: PolicyEnvelope = {
   },
   exit: {
     /**
-     * REMOVED 2026-08-13. Was 120, and before that 60.
+     * Recalibrated 2026-08-31 on 207 quote-priced closes with full tick
+     * paths, replayed in tick order on a CONSISTENT price basis (mark against
+     * the mark at the entry tick; see fetchSolUsd for why that matters) with
+     * the fill haircut measured from the engine's own realized exits (3.1%
+     * on time exits, 3.9% on stops).
      *
-     * The exit sweep over the current cohort's 57 real entries, replayed
-     * against our own ticks: NOTP/SL35 returns -$2.43 where the shipped
-     * TP120/SL35 returns -$44.84. Every rule with a wider stop is worse and
-     * every rule carrying a take-profit is worse. Eighteen times the
-     * difference, from removing one field.
+     * The shipped rule, no take-profit and a -35% stop over a 30-minute hold,
+     * replayed to -$371 on those positions; the engine actually realized
+     * -$379, so the replay is calibrated. Every stop level from 10 to 50
+     * lost more than no stop at all: these paths are V-shaped, a stop sells
+     * the bottom of the V and the 3.9% haircut on a crashed curve is paid on
+     * top. The best cell was take +20% or leave at five minutes, no stop:
+     * -$106, win rate 47%, mean -6.8% a trade, and negative in BOTH halves of
+     * the sample (-$33 older, -$73 newer). Trailing stops added nothing to it.
      *
-     * WHY, and this is the part that generalises: the launchpad universe pays
-     * like a lottery. Median 30-minute forward return is -52%, and the
-     * winners in this cohort ran +1,321%, +2,124% and +2,133%. A cap at +120%
-     * converts every one of those into a small win while the losses stay
-     * whole. The six take-profits that fired averaged +116.6% for exactly
-     * that reason — that is not what they were worth, it is where they were
-     * cut off.
+     * So this is a loss-rate change, not an edge: -25% a trade to about -7%.
+     * The remaining loss lives in the entries (see the deployer gates and the
+     * drift gate, both of which only now measure what they claim), and the
+     * paper record under this hash is what decides whether that is enough.
      *
-     * The 120 above was not wrong when written. It was fitted on the
-     * DexScreener promotional feed, where the same sweep found no-take-profit
-     * worth only 2.5%. `allowedOrigins` then switched the venue to launchpad
-     * and the exit rule did not follow. Third time this project has shipped a
-     * parameter calibrated for a universe it no longer trades.
-     *
-     * The stop stays at 35 and the time-stop at 30 minutes, so downside is
-     * still bounded and nothing is held indefinitely. What is removed is only
-     * the ceiling.
-     *
-     * CAVEAT carried from the sweep itself: it ignores exit impact and checks
-     * stops before targets within a bar, so it is an upper bound for RANKING
-     * rules, never an achievable number. -$2.43 is not a forecast.
+     * stopLossPct 50 is a catastrophe stop, not a strategy: with a five
+     * minute hold it fires only on a rug inside the window.
      */
-    takeProfitPct: null,
-    stopLossPct: 35,
-    /** These positions resolve in minutes; 45 was holding through the decay. */
-    timeStopMinutes: 30,
+    takeProfitPct: 20,
+    stopLossPct: 50,
+    timeStopMinutes: 5,
     vetoWindowMinutes: 10,
   },
   expiresAt: "2027-01-01T00:00:00Z",

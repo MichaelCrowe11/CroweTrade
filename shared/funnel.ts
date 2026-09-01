@@ -48,6 +48,8 @@ export interface FunnelCounts {
   blockedKilled: number
   blockedExpired: number
   blockedBreaker: number
+  /** Appended 2026-08-31: refused on deployer history (prior rugs or a launch factory). */
+  deployerRefused: number
 }
 
 export function emptyFunnel(): FunnelCounts {
@@ -57,6 +59,7 @@ export function emptyFunnel(): FunnelCounts {
     trajectoryUnconfirmed: 0, verdictTooLow: 0, modelProbTooLow: 0,
     budgetOrSlotsExhausted: 0, admitted: 0,
     blockedKilled: 0, blockedExpired: 0, blockedBreaker: 0,
+    deployerRefused: 0,
   }
 }
 
@@ -74,6 +77,7 @@ export const FUNNEL_KEYS = [
   // Appended 2026-08-13, AFTER `admitted`, so the 120 rows already in the ring
   // keep their meaning and read as zero here rather than shifting a stage.
   "blockedKilled", "blockedExpired", "blockedBreaker",
+  "deployerRefused",
 ] as const satisfies readonly (keyof FunnelCounts)[]
 
 export function packFunnel(f: FunnelCounts): number[] {

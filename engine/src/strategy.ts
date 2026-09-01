@@ -23,6 +23,16 @@ export interface OpenPosition {
   mint: string
   symbol: string
   entryPriceUsd: number
+  /**
+   * The listing MARK at the entry tick, the same series decideExits reads
+   * every minute. entryPriceUsd is the Jupiter-implied fill; comparing a mark
+   * against a fill mixes two price bases (measured 0.749 apart on 2026-08-31
+   * while SOL/USD was stale) and every exit rule silently rescales. null only
+   * on rows written before this column existed.
+   */
+  entryMarkUsd: number | null
+  /** SOL/USD the position was sized at, so pnl settles in SOL, not in a rate. */
+  entrySolUsd: number | null
   sizeSol: number
   sizeUsd: number
   tokenAmount: number
@@ -163,6 +173,15 @@ export function decideEntries(
     const verdict = combineVerdict(evaluateGates(c.snapshot))
     if (VERDICT_RANK[verdict] < minRank) { if (funnel) funnel.verdictTooLow += 1; continue }
 
+    // Deployer history, from our own corpus. Unknown passes on purpose.
+    const priorRugs = c.snapshot.deployerPriorRugs
+    const priorMints = c.snapshot.deployerPriorMints
+    const rugsExceeded = policy.entry.maxDeployerPriorRugs !== null
+      && priorRugs !== undefined && priorRugs > policy.entry.maxDeployerPriorRugs
+    const factory = policy.entry.maxDeployerPriorMints !== null
+      && priorMints !== undefined && priorMints > policy.entry.maxDeployerPriorMints
+    if (rugsExceeded || factory) { if (funnel) funnel.deployerRefused += 1; continue }
+
     // Model gate LAST, behind every safety check, so a refusal here means
     // "would have entered but for the model" — the exact population whose
     // forward returns test whether the model earns its keep. It can only
@@ -195,7 +214,11 @@ export function decideExits(
   for (const p of open) {
     const cur = prices.get(p.mint)
     if (!cur) continue // no fresh price this tick; hold and try next tick
-    const pnlPct = ((cur.priceUsd - p.entryPriceUsd) / p.entryPriceUsd) * 100
+    // Mark against mark. entryPriceUsd is a fill, cur.priceUsd is a listing
+    // mark; the two bases differed by 26% for two weeks and every exit rule
+    // fired at the wrong level. Legacy rows without a mark fall back.
+    const base = p.entryMarkUsd ?? p.entryPriceUsd
+    const pnlPct = ((cur.priceUsd - base) / base) * 100
     const heldMin = (now - p.openedAt) / 60_000
 
     // Order matters: a token turning BLOCKED exits first regardless of PnL —

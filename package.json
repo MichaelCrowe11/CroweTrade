@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "test:engine": "node --test --experimental-strip-types 'engine/src/**/*.test.ts'"
+    "test:engine": "node --test --experimental-strip-types --import ./engine/scripts/ts-resolver.mjs 'engine/src/**/*.test.ts'"
   },
   "dependencies": {
     "@coinbase/cdp-sdk": "^1.8.0",

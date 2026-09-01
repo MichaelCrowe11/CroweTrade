@@ -96,6 +96,9 @@ interface PositionRow {
   policy_hash: string
   verdict_entry: string
   veto_requested: number
+  entry_mark: number | null
+  sol_usd: number | null
+  pnl_sol: number | null
 }
 
 export class Ledger extends DurableObject<Env> {
@@ -268,6 +271,19 @@ export class Ledger extends DurableObject<Env> {
       // sqlite_master before rolling it back, which is the check that
       // corrected exactly that wrong call here.
       sql.exec("CREATE INDEX IF NOT EXISTS idx_ticks_at ON ticks (at)")
+      // 2026-08-31: keep the entry MARK beside the fill, the SOL/USD the
+      // position was sized at, and settle pnl in SOL. See fetchSolUsd.
+      for (const col of ["entry_mark REAL", "sol_usd REAL", "pnl_sol REAL"]) {
+        try {
+          sql.exec(`ALTER TABLE positions ADD COLUMN ${col}`)
+        } catch {
+          // Column already present.
+        }
+      }
+      // The labeler's `labeled = 0 AND voided = 0 AND at <= ?` and the
+      // follow-up's `at > ?` full-scanned 813k decision rows every tick.
+      // Same one-time build risk as idx_ticks_at above; same answer.
+      sql.exec("CREATE INDEX IF NOT EXISTS idx_decisions_label_at ON decisions (labeled, voided, at)")
       // Agent policy proposals. Inert records: the engine never reads this
       // table to decide anything, it exists so a human can review what an
       // agent suggested and why.
@@ -313,6 +329,8 @@ export class Ledger extends DurableObject<Env> {
       mint: r.mint,
       symbol: r.symbol,
       entryPriceUsd: r.entry_price,
+      entryMarkUsd: r.entry_mark ?? null,
+      entrySolUsd: r.sol_usd ?? null,
       sizeSol: r.size_sol,
       sizeUsd: r.size_usd,
       tokenAmount: r.token_amount,
@@ -379,6 +397,7 @@ export class Ledger extends DurableObject<Env> {
     const baseUnits = BigInt(Math.floor(p.tokenAmount * 10 ** decimals))
 
     let proceeds: number
+    let proceedsSol = 0
     let impact: number | null = null
     let route: string | null = null
     let pricing = "quote"
@@ -403,7 +422,8 @@ export class Ledger extends DurableObject<Env> {
         // Negative solDelta on a sell means SOL ARRIVED; proceeds are its
         // magnitude. Reading the quote here instead would re-introduce the
         // predicted-vs-realized gap this whole layer exists to close.
-        proceeds = (Number(-r.fill.solDeltaLamports) / 1e9) * solUsd
+        proceedsSol = Number(-r.fill.solDeltaLamports) / 1e9
+        proceeds = proceedsSol * solUsd
         impact = q.priceImpactPct
         route = q.route
         exitSig = r.signature
@@ -422,7 +442,8 @@ export class Ledger extends DurableObject<Env> {
         return
       }
     } else if (q && solUsd > 0) {
-      proceeds = (Number(q.outAmount) / LAMPORTS_PER_SOL) * solUsd
+      proceedsSol = Number(q.outAmount) / LAMPORTS_PER_SOL
+      proceeds = proceedsSol * solUsd
       impact = q.priceImpactPct
       route = q.route
     } else {
@@ -436,11 +457,20 @@ export class Ledger extends DurableObject<Env> {
       // 'unroutable': they remain in the record because the loss is real, and
       // they stay distinguishable because the price was never quoted.
       proceeds = 0
+      proceedsSol = 0
       pricing = "unroutable"
     }
 
-    const pnlUsd = proceeds - p.sizeUsd
-    const pnlPct = (pnlUsd / p.sizeUsd) * 100
+    // Settled in SOL. Both legs were quoted in SOL; converting each at the
+    // rate of its own minute and differencing the dollars books a move in
+    // SOL/USD as trading pnl (it did: the engine's rate went 92 -> 85 -> 76
+    // across August while the market went the other way). Dollars are a
+    // display conversion at the exit-tick rate.
+    const entrySolUsd = p.entrySolUsd && p.entrySolUsd > 0 ? p.entrySolUsd : solUsd
+    const sizeSolSpent = entrySolUsd > 0 ? p.sizeUsd / entrySolUsd : p.sizeSol
+    const pnlSol = proceedsSol - sizeSolSpent
+    const pnlUsd = solUsd > 0 ? pnlSol * solUsd : proceeds - p.sizeUsd
+    const pnlPct = sizeSolSpent > 0 ? (pnlSol / sizeSolSpent) * 100 : 0
     const effective = p.tokenAmount > 0 ? proceeds / p.tokenAmount : 0
 
     // Circuit breaker bookkeeping: stops count up, take-profits reset, and a
@@ -488,11 +518,11 @@ export class Ledger extends DurableObject<Env> {
     }
     this.sql().exec(
       `UPDATE positions SET closed_at = ?, exit_price = ?, exit_reason = ?, pnl_usd = ?, pnl_pct = ?,
-              exit_pricing = ?, exit_sig = ?
+              exit_pricing = ?, exit_sig = ?, pnl_sol = ?
        WHERE id = ?`,
-      now, effective, reason, pnlUsd, pnlPct, pricing, exitSig, p.id,
+      now, effective, reason, pnlUsd, pnlPct, pricing, exitSig, pnlSol, p.id,
     )
-    this.event("exit", { id: p.id, symbol: p.symbol, reason, pnlUsd, pnlPct, impact, route })
+    this.event("exit", { id: p.id, symbol: p.symbol, reason, pnlUsd, pnlPct, pnlSol, impact, route })
     capture(this.env, this.ctx, "paper_exit", {
       symbol: p.symbol, mint: p.mint, reason,
       pnl_usd: pnlUsd, pnl_pct: pnlPct, held_minutes: (now - p.openedAt) / 60_000,
@@ -704,9 +734,14 @@ export class Ledger extends DurableObject<Env> {
       const SOL_TTL_MS = 5 * 60_000
       const solAge = now - Number(this.metaGet("sol_usd_at") ?? "0")
       const wantFresh = solAge > SOL_TTL_MS || solUsd <= 0
-      const scan = await fetchCandidates(signal, wantFresh ? 0 : solUsd)
+      const scan = await fetchCandidates(signal, solUsd, wantFresh)
       candidates = scan.candidates
       if (scan.solUsd > 0 && scan.solUsd !== solUsd) {
+        // A rate that moves more than 15% between refreshes is either the
+        // market or a wrong pair; either way it belongs in the record.
+        if (solUsd > 0 && Math.abs(scan.solUsd / solUsd - 1) > 0.15) {
+          this.event("sol_usd_jump", { from: solUsd, to: scan.solUsd })
+        }
         solUsd = scan.solUsd
         this.metaSet("sol_usd", String(solUsd))
         this.metaSet("sol_usd_at", String(now))
@@ -873,6 +908,39 @@ export class Ledger extends DurableObject<Env> {
       }
     }
 
+    // Deployer history from our own corpus, for every candidate this tick.
+    //
+    // The gate has existed since day one and always read "corpus not yet
+    // built". The corpus has been building since 08-08 (creators x labeled
+    // decisions, 813k rows by 08-31) and nothing ever read it into the tick;
+    // only the paid /api/gates endpoint did. Counts are capped with LIMIT so
+    // a launch factory with thousands of rows costs the same as a first
+    // mint: the policy asks "more than N", never "how many".
+    {
+      const byMint = new Map(candidates.map((c) => [c.mint, c] as const))
+      const mints = [...byMint.keys()]
+      const PRIOR_CAP = 50
+      const RUG_CAP = 5
+      for (let i = 0; i < mints.length; i += 50) {
+        const chunk = mints.slice(i, i + 50)
+        const rows = this.sql().exec<{ mint: string; prior: number; rugs: number }>(
+          `SELECT cr.mint AS mint,
+                  (SELECT COUNT(*) FROM (SELECT 1 FROM creators c2 JOIN decisions d2 ON d2.mint = c2.mint
+                     WHERE c2.creator = cr.creator AND c2.mint != cr.mint AND d2.labeled = 1 LIMIT ${PRIOR_CAP})) AS prior,
+                  (SELECT COUNT(*) FROM (SELECT 1 FROM creators c3 JOIN decisions d3 ON d3.mint = c3.mint
+                     WHERE c3.creator = cr.creator AND c3.mint != cr.mint AND d3.labeled = 1 AND d3.died = 1 LIMIT ${RUG_CAP})) AS rugs
+             FROM creators cr WHERE cr.mint IN (${chunk.map(() => "?").join(",")})`,
+          ...chunk,
+        ).toArray()
+        for (const row of rows) {
+          const c = byMint.get(row.mint)
+          if (!c || row.prior <= 0) continue
+          c.snapshot.deployerPriorMints = row.prior
+          c.snapshot.deployerPriorRugs = row.rugs
+        }
+      }
+    }
+
     // Record every priced observation. This is the beginning of the corpus:
     // OUR minute-by-minute view of each token's price, liquidity and flow,
     // which no promotional feed can pollute. Strategy v2's entry signal reads
@@ -941,6 +1009,10 @@ export class Ledger extends DurableObject<Env> {
         : c.liquidityUsd === null || c.liquidityUsd < policy.entry.minLiquidityUsd ? "thin"
         : c.changeH1 !== null && c.changeH1 > policy.entry.maxChangeH1Pct ? "parabolic"
         : verdict === "blocked" || verdict === "insufficient-data" ? `verdict-${verdict}`
+        : policy.entry.maxDeployerPriorRugs !== null && c.snapshot.deployerPriorRugs !== undefined
+            && c.snapshot.deployerPriorRugs > policy.entry.maxDeployerPriorRugs ? "deployer-rugs"
+        : policy.entry.maxDeployerPriorMints !== null && c.snapshot.deployerPriorMints !== undefined
+            && c.snapshot.deployerPriorMints > policy.entry.maxDeployerPriorMints ? "deployer-factory"
         : null
 
       this.sql().exec(
@@ -1371,10 +1443,10 @@ export class Ledger extends DurableObject<Env> {
         const id = crypto.randomUUID()
         this.sql().exec(
           `INSERT INTO positions
-           (id, mint, symbol, entry_price, size_sol, size_usd, token_amount, opened_at, policy_hash, verdict_entry, priced_by, execution, entry_sig)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'quote', ?, ?)`,
+           (id, mint, symbol, entry_price, size_sol, size_usd, token_amount, opened_at, policy_hash, verdict_entry, priced_by, execution, entry_sig, entry_mark, sol_usd)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'quote', ?, ?, ?, ?)`,
           id, c.mint, c.symbol, entryPrice, e.sizeSol, sizeUsd, tokenAmount, now, hash, e.verdict,
-          execution, entrySig,
+          execution, entrySig, c.priceUsd, solUsd,
         )
         this.sql().exec(
           "UPDATE decisions SET entered = 1, entry_impact_pct = ? WHERE mint = ? AND labeled = 0",
@@ -1829,82 +1901,107 @@ export class Ledger extends DurableObject<Env> {
   exitSweep(): unknown {
     const sql = this.sql()
     const positions = sql.exec<{
-      mint: string; entry_price: number; size_usd: number
-      opened_at: number; origin: string | null
+      id: string; mint: string; entry_price: number; entry_mark: number | null
+      size_usd: number; opened_at: number; pnl_usd: number | null
     }>(
-      `SELECT p.mint, p.entry_price, p.size_usd, p.opened_at,
-              (SELECT MIN(d.origin) FROM decisions d WHERE d.mint = p.mint) AS origin
+      `SELECT p.id, p.mint, p.entry_price, p.entry_mark, p.size_usd, p.opened_at, p.pnl_usd
        FROM positions p WHERE p.closed_at IS NOT NULL AND p.priced_by = 'quote'`,
     ).toArray()
 
-    // Every rule replays the SAME fixed horizon from entry — the shipped
-    // policy's 30-minute time stop — regardless of when the real position
-    // closed. The earlier version replayed only [opened_at, closed_at], so a
-    // position the live stop closed at minute 3 could never answer "what if we
-    // had held", which is the exact question the realized record raises:
-    // launchpad stops all lost while launchpad time-stops averaged +35.8%.
-    // null tp = no target; null sl = no stop; both null = pure time exit.
-    const HOLD_MS = 30 * 60_000
-    const grid: { tp: number | null; sl: number | null }[] = [
-      { tp: 120, sl: 35 }, // shipped policy, the baseline
-      { tp: 120, sl: 50 },
-      { tp: 120, sl: 70 },
-      { tp: 120, sl: null },
-      { tp: null, sl: 35 },
-      { tp: null, sl: null },
+    // Fill haircuts measured 2026-08-31 from the engine's own realized exits
+    // against the mark at the exit tick: median 3.1% on time exits, 3.9% on
+    // stops (a stop sells a curve that is draining). Charged on every exit so
+    // the grid ranks NET of the cost of leaving; the previous form ignored it
+    // and reported ceilings no rule could reach.
+    const HAIRCUT: Record<string, number> = {
+      "take-profit": 0.031, "time-stop": 0.031, "trailing-stop": 0.031, "stop-loss": 0.039,
+    }
+    const grid: { tp: number | null; sl: number | null; hold: number; trail: [number, number] | null; label: string | null }[] = [
+      { tp: 20, sl: 50, hold: 5, trail: null, label: "shipped 2026-08-31" },
+      { tp: 20, sl: null, hold: 5, trail: null, label: null },
+      { tp: 15, sl: null, hold: 5, trail: null, label: null },
+      { tp: 30, sl: null, hold: 10, trail: null, label: null },
+      { tp: 20, sl: 25, hold: 5, trail: null, label: null },
+      { tp: null, sl: null, hold: 5, trail: null, label: null },
+      { tp: 30, sl: 35, hold: 10, trail: [30, 20], label: null },
+      { tp: null, sl: 35, hold: 30, trail: null, label: "policy 08-13 to 08-31" },
+      { tp: 120, sl: 35, hold: 30, trail: null, label: "v1 policy" },
+      { tp: null, sl: null, hold: 30, trail: null, label: null },
     ]
-
+    const HOLD_MAX_MS = 30 * 60_000
+    let counted = 0
+    let realized = 0
+    const pathOf = new Map<string, { at: number; price: number }[]>()
+    for (const p of positions) {
+      const ticks = sql.exec<{ at: number; price: number | null }>(
+        "SELECT at, price FROM ticks WHERE mint = ? AND at >= ? AND at <= ? AND price IS NOT NULL ORDER BY at ASC",
+        p.mint, p.opened_at, p.opened_at + HOLD_MAX_MS,
+      ).toArray().map((t) => ({ at: t.at, price: t.price as number }))
+      // The base is the MARK at the entry tick: the series the exits read.
+      // Rows from before entry_mark existed use the tick written that minute.
+      const first = ticks[0]
+      const base = p.entry_mark ?? (first && first.at === p.opened_at ? first.price : null)
+      if (base === null || base <= 0 || ticks.length < 2) continue
+      pathOf.set(p.id, ticks)
+      counted += 1
+      realized += p.pnl_usd ?? 0
+    }
     const results = grid.map((g) => {
-      let pnl = 0, wins = 0, counted = 0, tpHits = 0, slHits = 0, expiries = 0
-      const byOrigin = new Map<string, { counted: number; pnl: number }>()
+      let pnl = 0, wins = 0, tpHits = 0, slHits = 0, trailHits = 0, expiries = 0
+      let best = -Infinity
+      let n = 0
       for (const p of positions) {
-        const ticks = sql.exec<{ price: number | null }>(
-          "SELECT price FROM ticks WHERE mint = ? AND at >= ? AND at <= ? ORDER BY at ASC",
-          p.mint, p.opened_at, p.opened_at + HOLD_MS,
-        ).toArray()
-        if (ticks.length === 0 || p.entry_price <= 0) continue
-        counted += 1
-
-        const upper = g.tp === null ? null : p.entry_price * (1 + g.tp / 100)
-        const lower = g.sl === null ? null : p.entry_price * (1 - g.sl / 100)
+        const ticks = pathOf.get(p.id)
+        if (!ticks) continue
+        const base = p.entry_mark ?? ticks[0]!.price
+        let peak = base
         let retPct: number | null = null
         for (const t of ticks) {
+          if (t.at <= p.opened_at) continue
           const px = t.price
-          if (px === null) continue
-          // Stop checked first: within a one-minute bar we cannot see order,
-          // and assuming the favorable fill is how backtests lie.
-          if (lower !== null && px <= lower) { retPct = -(g.sl as number); slHits += 1; break }
-          if (upper !== null && px >= upper) { retPct = g.tp as number; tpHits += 1; break }
+          const move = (px / base - 1) * 100
+          if (px > peak) peak = px
+          const elapsedMin = (t.at - p.opened_at) / 60_000
+          let reason: string | null = null
+          if (g.tp !== null && move >= g.tp) reason = "take-profit"
+          else if (g.sl !== null && move <= -g.sl) reason = "stop-loss"
+          else if (g.trail && peak >= base * (1 + g.trail[0] / 100) && px <= peak * (1 - g.trail[1] / 100)) reason = "trailing-stop"
+          else if (elapsedMin >= g.hold) reason = "time-stop"
+          if (reason) {
+            retPct = ((px * (1 - (HAIRCUT[reason] ?? 0.031))) / base - 1) * 100
+            if (reason === "take-profit") tpHits += 1
+            else if (reason === "stop-loss") slHits += 1
+            else if (reason === "trailing-stop") trailHits += 1
+            else expiries += 1
+            break
+          }
         }
         if (retPct === null) {
-          const last = ticks[ticks.length - 1]?.price ?? p.entry_price
-          retPct = ((last - p.entry_price) / p.entry_price) * 100
+          const last = ticks[ticks.length - 1]!.price
+          retPct = ((last * (1 - 0.031)) / base - 1) * 100
           expiries += 1
         }
         const trade = p.size_usd * (retPct / 100)
         pnl += trade
+        n += 1
+        if (trade > best) best = trade
         if (trade > 0) wins += 1
-        const o = p.origin ?? "unknown"
-        const agg = byOrigin.get(o) ?? { counted: 0, pnl: 0 }
-        agg.counted += 1
-        agg.pnl += trade
-        byOrigin.set(o, agg)
       }
       return {
-        rule: `${g.tp === null ? "NOTP" : `TP${g.tp}`}/${g.sl === null ? "NOSL" : `SL${g.sl}`}`,
-        counted, tpHits, slHits, expiries,
+        rule: `${g.tp === null ? "NOTP" : `TP${g.tp}`}/${g.sl === null ? "NOSL" : `SL${g.sl}`}/${g.trail ? `TRAIL${g.trail[0]}-${g.trail[1]}/` : ""}HOLD${g.hold}`,
+        label: g.label,
+        counted: n, tpHits, slHits, trailHits, expiries,
         pnlUsd: Number(pnl.toFixed(2)),
-        winRate: counted > 0 ? Number((wins / counted).toFixed(3)) : null,
-        byOrigin: Object.fromEntries(
-          [...byOrigin].map(([o, a]) => [o, { counted: a.counted, pnlUsd: Number(a.pnl.toFixed(2)) }]),
-        ),
+        pnlExBestUsd: Number((n > 0 ? pnl - best : 0).toFixed(2)),
+        winRate: n > 0 ? Number((wins / n).toFixed(3)) : null,
       }
     })
-
     return {
-      note: "Exit-rule counterfactual on real entries and our own observed ticks, fixed 30-minute horizon. Ignores exit impact, so these are upper bounds — rank rules against each other, do not read as achievable PnL.",
+      note: "Exit-rule counterfactual on real entries and our own observed ticks: mark against the mark at the entry tick, fills haircut by the measured exit cost. realizedUsd is what the engine actually booked on the same positions under the rule it was running; the gap to that rule's row is the replay's optimism. Read pnlExBestUsd before pnlUsd.",
       positions: positions.length,
-      results: results.sort((a, b) => b.pnlUsd - a.pnlUsd),
+      counted,
+      realizedUsd: Number(realized.toFixed(2)),
+      results: results.sort((a, b) => b.pnlExBestUsd - a.pnlExBestUsd),
     }
   }
 
@@ -2019,6 +2116,13 @@ export class Ledger extends DurableObject<Env> {
    * trained on raw direction would learn to recommend exactly those.
    */
   trainModel(): unknown {
+    // Population: candidates that reached the model gate (eligible or
+    // entered), most recent 30k. Loading all 813k labeled rows into the
+    // isolate exceeded its memory and reset the object (observed 08-31), and
+    // the 95% of rows refused as too-new have no tick features to learn from.
+    // NOTE 2026-08-31: the ARMED model's probability was measured
+    // anti-predictive on the live population (entered, prob 0.05-0.1: mean
+    // forward -9.3%; 0.1-0.2: -12.9%; 0.2-0.4: -27.3%). It stays disarmed.
     const COST_HURDLE_PCT = 6
     const rows = this.sql().exec<{
       at: number; features: string; forward_ret_pct: number | null
@@ -2037,7 +2141,8 @@ export class Ledger extends DurableObject<Env> {
                 ORDER BY t.at DESC LIMIT 1) AS liq_usd
        FROM decisions d
        WHERE d.labeled = 1 AND d.forward_ret_pct IS NOT NULL AND d.voided = 0
-       ORDER BY d.at ASC`,
+         AND (d.eligible = 1 OR d.entered = 1)
+       ORDER BY d.at DESC LIMIT 30000`,
     ).toArray()
 
     const training = rows.map((r) => {
