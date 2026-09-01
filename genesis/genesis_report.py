@@ -78,9 +78,18 @@ base=[g for g in report["grid"] if g["k"]==5 and g["exit"]=="tp20/300"]
 if base: lines.append(f"reference: enter +5s, tp20/300: mean {base[0]['mean']:+.1f}% median {base[0]['median']:+.1f}% win {base[0]['win']}% (n={base[0]['n']})")
 pos=[s for s in report["strata"] if s["exbest"]>0]
 lines.append("strata with positive ex-best: "+("; ".join(f"+{s['k']}s {s['exit']} {s['stratum']} {s['exbest']:+.1f}% (n={s['n']})" for s in pos[:6]) if pos else "none"))
+# ---- second-mover thesis (wallet reputation + holder reconstruction), point in time
+try:
+    sys.path.insert(0, DIR)
+    import genesis_wallets
+    sm = genesis_wallets.run(con, [dict(t) for t in tokens])
+    report["secondMover"] = sm
+    lines += sm["lines"]
+except Exception as e:
+    lines.append(f"second-mover: failed: {e!r}")
 report["lines"]=lines
 json.dump(report,open(f"{DIR}/report.json","w"),indent=1)
-print("\n".join(lines)); print("--- grid (top 12 by exBest)")
+print("\n".join(lines)); print("--- second-mover grid"); [print(f"  {g['rule']:48s} n={g['n']:5d} mean={g['mean']:+7.2f} exBest={g['exbest']:+7.2f} med={g['median']:+7.2f} win={g['win']:5.1f}% p90={g['p90']:+.1f}") for g in report.get("secondMover",{}).get("grid",[])[:12]]; print("--- grid (top 12 by exBest)")
 for g in sorted(report["grid"],key=lambda g:-g["exbest"])[:12]: print(f"  +{g['k']:3d}s {g['exit']:9s} n={g['n']:5d} mean={g['mean']:+7.2f} exBest={g['exbest']:+7.2f} med={g['median']:+7.2f} win={g['win']:5.1f}% p90={g['p90']:+.1f}")
 print("--- strata (top 10 by exBest)")
 for s in sorted(report["strata"],key=lambda s:-s["exbest"])[:10]: print(f"  +{s['k']:3d}s {s['exit']:9s} {s['stratum']:32s} n={s['n']:5d} mean={s['mean']:+7.2f} exBest={s['exbest']:+7.2f} win={s['win']:5.1f}%")
