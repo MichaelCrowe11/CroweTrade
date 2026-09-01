@@ -49,3 +49,6 @@ yarn-debug.log*
 # Deployment files
 fly.toml.bak
 deploy-crowetrade.ps1.bak
+
+# Deployment config; tracked in the public repo until 2026-08-31, never held a secret
+.env.production
