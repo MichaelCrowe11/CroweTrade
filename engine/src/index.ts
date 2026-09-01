@@ -297,6 +297,16 @@ export default {
       if (url.pathname === "/api/entry-sweep" && req.method === "GET") {
         return json(await ledger(env).entrySweep())
       }
+      if (url.pathname === "/api/genesis" && req.method === "POST") {
+        // The collector on the Pro posts its daily summary here.
+        if (!(await authorized(req, env))) return json({ error: "unauthorized" }, 401)
+        const body = (await req.json().catch(() => null)) as unknown
+        if (!body || typeof body !== "object") return json({ error: "json object required" }, 400)
+        return json(await ledger(env).setGenesisReport(body))
+      }
+      if (url.pathname === "/api/genesis" && req.method === "GET") {
+        return json(await ledger(env).genesisReport())
+      }
       if (url.pathname === "/api/digest" && req.method === "GET") {
         // Read the digest as it would be sent, without sending it.
         if (!(await authorized(req, env, "research"))) return json({ error: "unauthorized" }, 401)

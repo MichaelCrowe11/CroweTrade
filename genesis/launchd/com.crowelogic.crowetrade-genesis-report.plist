@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CroweTrade Genesis daily replay: runs 06:50 Phoenix, posts the summary to the engine so the
+     07:00 digest carries it. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.crowelogic.crowetrade-genesis-report</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/crowelogic/crowetrade-genesis/genesis_report.py</string>
+        <string>--post</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>50</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/crowelogic/crowetrade-genesis/report.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/crowelogic/crowetrade-genesis/report.err</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

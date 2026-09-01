@@ -634,6 +634,14 @@ export class Ledger extends DurableObject<Env> {
         : "deployer refusals at first sight (24h): none",
       `calibration (launchpad, all time): entered ${fmt(lp.enteredRet)} vs refused-eligible ${fmt(lp.refusedRet)} forward 30m; ${lp.labeled} labeled, ${lp.died} died.`,
       "",
+      ...(() => {
+        const g = this.genesisReport() as { receivedAt?: number; report?: { lines?: unknown } } | null
+        const lines = Array.isArray(g?.report?.lines) ? (g!.report!.lines as unknown[]).map(String) : null
+        if (!lines) return ["", "Genesis feed: no report received yet."]
+        const age = g?.receivedAt ? ((now - g.receivedAt) / 3_600_000).toFixed(1) : "?"
+        return ["", `Genesis feed (second resolution, report ${age}h old):`, ...lines.map((l) => `  ${l}`)]
+      })(),
+      "",
       "Still paper. No capital at risk.",
       "https://crowetrade-engine.yellow-block-3adc.workers.dev/api/positions",
       "https://crowetrade-engine.yellow-block-3adc.workers.dev/api/exit-sweep",
@@ -643,6 +651,25 @@ export class Ledger extends DurableObject<Env> {
       subject: `CroweTrade daily: ${day.n ?? 0} closes, ${sol >= 0 ? "+" : ""}${sol.toFixed(3)} SOL, win ${win(day)} (${short})`,
       text: lines.join("\n"),
     }
+  }
+
+  /**
+   * The Genesis feed's daily summary, posted by the collector on the Pro
+   * (second-resolution creation and trade stream) before the digest hour.
+   * Stored verbatim in meta; the digest prints its `lines`. The engine does
+   * not act on it: it is the other vantage point's report, carried in the
+   * same envelope so one email holds both.
+   */
+  setGenesisReport(report: unknown): { ok: true } {
+    this.metaSet("genesis_report", JSON.stringify({ receivedAt: Date.now(), report }))
+    this.event("genesis_report", { receivedAt: Date.now() })
+    return { ok: true }
+  }
+
+  genesisReport(): unknown {
+    const raw = this.metaGet("genesis_report")
+    if (!raw) return null
+    try { return JSON.parse(raw) as unknown } catch { return null }
   }
 
   maybeDigest(force = false): { queued: boolean; reason: string } {

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CroweTrade Genesis collector: pump.fun creations + first 15 minutes of trades at
+     transaction resolution, into ~/crowetrade-genesis/genesis.db. Watches only; never trades.
+     Install: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.crowelogic.crowetrade-genesis.plist -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.crowelogic.crowetrade-genesis</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/node</string>
+        <string>--no-warnings</string>
+        <string>/Users/crowelogic/crowetrade-genesis/collector.mjs</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/crowelogic/crowetrade-genesis/collector.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/crowelogic/crowetrade-genesis/collector.err</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
